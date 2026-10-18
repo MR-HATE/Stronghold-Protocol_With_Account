@@ -41,6 +41,7 @@ import { setEntries, setOpsMap, flushLoadout, pauseLoadoutSync, resumeLoadoutSyn
 import { parseStored, parseStoredOps } from '../ui/loadoutModel.js';
 import { applyAccountStats } from '../ui/stats.js';
 import { installedCount } from '../content.js';
+import { NoticesButton } from '../ui/notices.js';
 import { sanitizeName, isValidName } from '../ui/playerName.js';
 
 export { stripLoneSurrogates, sanitizeName, isValidName } from '../ui/playerName.js';
@@ -520,6 +521,7 @@ export function TitleScreen() {
     <footer class="title-foot">
       <${ResumeMatchButton} />
       <${PwaInstallButton} />
+      <${NoticesButton} />
       ${installed ? html`<button type="button" class="title-plugins" data-testid="title-plugins" onClick=${openPlugins}>
         <${Icon} name="info" />${t('本服务器安装了 {n} 个插件', { n: installed })}</button>` : null}
       <span>${t('非官方同人复刻 · 游戏素材版权归 上海鹰角网络 / Yostar 所有')}</span>
