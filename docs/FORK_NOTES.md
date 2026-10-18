@@ -55,6 +55,10 @@
 
 胶囊量的是客户端自己 `ping`/`pong` 的往返，而这个往返是在页面主线程上按「收到时刻 − 发出时刻」算的，所以页面自己卡顿的时间也会被算成网络延迟（对局中本机要跑战斗模拟与渲染时尤其明显）。现在显示的是 **15 秒窗口内的最低往返**（`PING_WINDOW_MS`）：卡顿只会让单次采样偏大，取最小即链路延迟。`net.pingLast` 保留最近一次原始采样，控制台 `__SP__.net.ping`（显示值）/ `__SP__.net.pingLast`（含卡顿的原始值）可对照；死连接看门狗不受影响（它数的是发出后无人应答的 ping）。代码：[public/js/net.js](../public/js/net.js)、[public/js/ui/components.js](../public/js/ui/components.js)。
 
+## 能不能把账号系统做成 0.3.0 插件？
+
+**结论：按 0.3.0 冻结的插件 API 做不到，建议不做。** 评估（判据、九条耦合点、七个阻塞点、`service` 类草案、三条路线与推荐）见 [ACCOUNT-PLUGIN-FEASIBILITY.md](ACCOUNT-PLUGIN-FEASIBILITY.md)。一句话：0.3.0 里能跑服务器代码的只有 `trusted` 类，它只有 `http.route` / `lobby.on`（5 个只读事件）/ `health.extend` 三个接口，且默认关闭、要求 pin、**拒绝通配/公网监听地址**；而账号系统是「WS 帧 + 会话身份 + 进程内同步 token 查表 + 标题页 UI」，四件事都不在插件 API 的语义里。推荐路线 A：留在树内，把它重构成自包含模块 + 少量显式缝隙。
+
 ## 运维：Docker 必须挂账号目录
 
 镜像里 `accounts.json` 在容器的可写层（Dockerfile 结尾是 `USER node`，所以是 `/home/node/data/accounts.json`），**`docker rm` + 重新 `docker run` 就等于清空账号**。重建容器时必须：
