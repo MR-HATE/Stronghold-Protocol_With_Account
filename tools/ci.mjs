@@ -26,6 +26,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -286,8 +287,11 @@ async function smoke(env) {
   const port = await freePort();
   // [ASSUMED] HOST=127.0.0.1 instead of the unset-HOST default (::): the requests go to 127.0.0.1 either way, and
   // listening only on loopback spares a firewall prompt on Windows / macOS.
+  // ACCOUNTS_DIR is a throwaway temp directory: a local smoke run must not read or migrate the operator's real
+  // `~/data/accounts.json` into SQLite. (The GitHub runner has no such file either.)
+  const smokeEnv = { ...env, PORT: String(port), HOST: '127.0.0.1', ACCOUNTS_DIR: path.join(os.tmpdir(), 'sp-ci-smoke-accounts', String(process.pid)) };
   const child = spawn(process.execPath, ['server/index.js'], {
-    cwd: ROOT, env: { ...env, PORT: String(port), HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: ROOT, env: smokeEnv, stdio: ['ignore', 'pipe', 'pipe'],
   });
   servers.add(child);
   let log = '';
@@ -321,7 +325,7 @@ async function smoke(env) {
     if (!pixi.ok) return await fail(`GET /vendor/pixi.min.js → HTTP ${pixi.status} (public/vendor missing? node tools/vendor.mjs)`);
     console.log(`GET /vendor/pixi.min.js → ${pixi.status}`);
     // ci.yml: `node tools/doctor.mjs || true` — its exit code does not fail the step.
-    const doctor = await node(['tools/doctor.mjs', '--port', String(port), '--host', '127.0.0.1'], env);
+    const doctor = await node(['tools/doctor.mjs', '--port', String(port), '--host', '127.0.0.1'], smokeEnv);
     if (doctor !== 0) console.log(`(doctor exited ${doctor}; ignored, as in ci.yml)`);
   } catch (e) {
     return await fail(e?.message || String(e));

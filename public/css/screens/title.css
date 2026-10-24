@@ -290,10 +290,13 @@ html[data-script="alphabetic"] .title-login .btn--xl { letter-spacing: .3em; }
 .title-conn .ping { height: max(.26rem, 1.6em); font-size: calc(.15 * var(--t)); }
 
 /* ---- account (extension §account: register / login modal, and the account name as the in-game 代号) --------- */
-.title-account { display: flex; align-items: center; justify-content: center; gap: .12rem; margin-top: .1rem; font-size: calc(.12 * var(--t)); }
+.title-account { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .12rem; margin-top: .1rem; font-size: calc(.12 * var(--t)); }
 .title-account__me { color: #8fb8a8; }
+.title-account__id { font-family: var(--font-num); color: #7be8c4; overflow-wrap: anywhere; }
+.title-account__id b { font-weight: 400; }
 .title-account__link { background: none; border: none; color: #4ed8af; cursor: pointer; font-size: calc(.12 * var(--t)); text-decoration: underline; padding: 0; font-family: inherit; }
 .title-account__link:hover { color: #7be8c4; }
+.title-created__id { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .12rem; font-family: var(--font-num); color: var(--mint-400); font-size: calc(.2 * var(--t)); }
 /* Logged in: the callsign field is replaced by the account name (read-only), with the same box metrics. */
 .title-account-name { text-align: left; }
 .title-account-name .field__box { border-color: rgba(78, 216, 175, .35); }

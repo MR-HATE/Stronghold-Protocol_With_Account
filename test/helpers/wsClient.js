@@ -15,8 +15,8 @@ import WebSocket from 'ws';
 
 // `auth.result` is the account extension's reply to auth.register / auth.login (extension §account) — it carries the
 // token/username payload of its own instead of a bare `ok`, so request() must accept it as a reply. `stats.sync` is
-// the same for stats.pull (the account's 对局统计 mirror).
-const REPLY_TYPES = new Set(['ok', 'error', 'welcome', 'pong', 'auth.result', 'stats.sync']);
+// the same for stats.pull (the account's 对局统计 mirror) and `settings.sync` for settings.pull.
+const REPLY_TYPES = new Set(['ok', 'error', 'welcome', 'pong', 'auth.result', 'stats.sync', 'settings.sync']);
 
 export class TestClient {
   /**

@@ -142,12 +142,13 @@ export class Session {
     this.skins = null;
     /** @type {string | null} account-level token (extension §account, server/accounts.js); null = not logged in */
     this.accountToken = null;
-    /** @type {string | null} verified account username — the in-game name when logged in (lobby-owned) */
+    /** @type {string | null} verified account username — the mutable in-game name when logged in (lobby-owned) */
     this.accountName = null;
     /**
-     * @type {string | null} the account key (lowercased username) this session's SEAT belongs to (lobby-owned,
-     * extension §account). Never reassigned to a different account without the lobby first releasing the seat
-     * (lobby.js accountHello / releaseForeignSeat), which is what keeps one account's room/match out of another's.
+     * @type {string | null} the stable ACCOUNT ID this session's SEAT belongs to (lobby-owned, extension §account).
+     * Never reassigned to a different account without the lobby first releasing the seat (lobby.js accountHello /
+     * releaseForeignSeat), which is what keeps one account's room/match out of another's. A username change keeps
+     * this id, so the seat, loadout, statistics and settings never move.
      */
     this.accountKey = null;
     /**
@@ -183,7 +184,7 @@ export class SessionRegistry {
     this.now = now;
     /** @type {Map<string, Session>} */ this.byPlayerId = new Map();
     /** @type {Map<string, Session>} */ this.byTokenMap = new Map();
-    /** @type {Map<string, Session>} account key (lowercased username) → the session holding its seat (extension §account) */
+    /** @type {Map<string, Session>} stable account ID → the session holding its seat (extension §account) */
     this.byAccountMap = new Map();
   }
 
@@ -225,7 +226,7 @@ export class SessionRegistry {
    * which is what a player expects from "logging in". Not verified here: server/lobby.js accountHello resolves
    * the token against the store, and only a successful resolution reaches this call (after the lobby has
    * released a seat that belonged to a different account).
-   * @param {string} accountKey lowercased username @param {Session} s
+   * @param {string} accountKey stable account id @param {Session} s
    */
   bindAccount(accountKey, s) {
     if (typeof accountKey !== 'string' || !accountKey) return;
@@ -753,6 +754,7 @@ export class Network {
       // the account's 对局统计 mirror; every other intent acknowledges with a bare `ok`.
       if (res && res.authResult) this.reply(conn, { ...res.authResult, t: 'auth.result', rid });
       else if (res && res.statsSync) this.reply(conn, { t: 'stats.sync', rid, ...res.statsSync });
+      else if (res && res.settingsSync) this.reply(conn, { t: 'settings.sync', rid, ...res.settingsSync });
       else this.reply(conn, { t: 'ok', rid });
     }
   }

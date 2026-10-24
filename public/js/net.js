@@ -15,11 +15,11 @@
 // - On every (re)connect, once a player name is known, sends `hello {name, token, version}`;
 //   the session is "online" after `welcome`. A logged-in account (accountStore, extension §account)
 //   sends `hello {account, token, version}` with NO name: the account username is the in-game name and
-//   the server resolves it (it may be longer than the callsign limit), so `name` is optional in the
-//   frame. The `welcome` carries the verified name. A `welcome` WITHOUT `accountName` means the server did not
-//   accept the credential (its account store was wiped or replaced): the bearer is forgotten (the username stays
-//   for the login form) and `accountRejected` records it, so the app asks the player to sign in again instead of
-//   playing on as the 游客 session that hello fell back to (main.js onWelcome — 不放行).
+//   the server resolves it (it may be longer than the callsign limit / any script), so `name` is optional in the
+//   frame. The `welcome` carries the verified name and the stable `accountId`. A `welcome` WITHOUT `accountName`
+//   means the server did not accept the credential (its account store was wiped or replaced): the bearer is forgotten
+//   (the username / account id stay for the login form) and `accountRejected` records it, so the app asks the player
+//   to sign in again instead of playing on as the 游客 session that hello fell back to (main.js onWelcome — 不放行).
 // - `request(t, fields)` adds a `rid` and resolves on the matching `ok` (or any reply carrying the
 //   rid), rejects with a NetError on `error` or after REQUEST_TIMEOUT_MS. Requests made while
 //   reconnecting are queued and flushed after `welcome` (still bound by their timeout).
@@ -44,6 +44,7 @@
 
 import { PROTOCOL_VERSION, ERR_TEXT } from '../../shared/constants.js';
 import { validateC2S } from '../../shared/protocol.js';
+import { normalizeAccountId } from '../../shared/account.js';
 import { N_ } from '../../shared/i18n.js';
 
 export const REQUEST_TIMEOUT_MS = 8000;
@@ -484,16 +485,16 @@ export class Net {
 
   /**
    * Forget the account token the server did not accept, keeping the username for the login form, and return what the
-   * welcome handler needs to say. The seat this session had still belongs to that account key and a later login of the
+   * welcome handler needs to say. The seat this session had still belongs to that stable account ID and a later login of the
    * same account comes back to it (lobby.js); nothing else about the session changes.
    * @param {string} token the token this hello presented
-   * @returns {{ username: string }}
+   * @returns {{ username: string, accountId: string }}
    */
   _forgetRejectedAccount(token) {
     const acct = accountStore.read();
-    const username = acct && acct.token === token ? acct.username : '';
+    const own = acct && acct.token === token ? acct : null;
     accountStore.forget();
-    return { username };
+    return { username: own?.username || '', accountId: own?.accountId || '' };
   }
 
   _onHelloError(msg) {
@@ -1067,45 +1068,53 @@ export function createIdentity(deps = {}) {
 export const identity = createIdentity({ onYield: () => net.reconnectNow(net.helloName || net.name) });
 
 /**
- * Account (username + token) persistence — the account extension §account.
+ * Account (account ID + username + token) persistence — the account extension §account.
  *
  * Distinct from `identity` (the per-tab reconnect token): the account token is a long-lived bearer for the human
- * behind the screen. It survives server restarts and is what makes the username the in-game name (server/lobby.js
- * accountHello), carries the saved 干员调配 across tabs and devices, and lets the same account resume its seat
- * from another device. localStorage (not sessionStorage) on purpose — the same person on a second browser logs in
- * rather than re-picking a callsign.
+ * behind the screen. The ACCOUNT ID is the stable login name (generated for a new account; the old username for an
+ * account migrated from the username-as-login era); the USERNAME is only the mutable in-game name. The token
+ * survives server restarts, carries the saved 干员调配 / 统计 / 设置 across tabs and devices, and lets the same
+ * account resume its seat from another device. localStorage (not sessionStorage) on purpose — the same person on a
+ * second browser logs in rather than re-picking a callsign.
  */
 const ACCT_KEY = 'sp.account';
 const isAcctToken = (v) => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 
+/** @param {any} o @returns {string} the stored account id, or the old username-as-id for a pre-split entry */
+const accountIdOf = (o) => normalizeAccountId(o?.accountId) || normalizeAccountId(o?.username) || '';
+
 export const accountStore = {
-  /** @returns {{ token: string, username: string } | null} */
+  /** @returns {{ token: string, accountId: string, username: string } | null} */
   read() {
     try {
       const raw = globalThis.localStorage?.getItem(ACCT_KEY);
       if (!raw) return null;
       const o = JSON.parse(raw);
-      if (o && isAcctToken(o.token) && typeof o.username === 'string') return o;
+      if (o && isAcctToken(o.token) && typeof o.username === 'string') {
+        return { token: o.token, accountId: accountIdOf(o), username: o.username };
+      }
     } catch { /* ignore */ }
     return null;
   },
-  /** @param {{ token: string, username: string }} a */
+  /** @param {{ token: string, accountId?: string, username: string }} a */
   write(a) {
     if (!a || !isAcctToken(a.token) || typeof a.username !== 'string') return;
-    try { globalThis.localStorage?.setItem(ACCT_KEY, JSON.stringify({ token: a.token, username: a.username })); } catch { /* ignore */ }
+    const accountId = normalizeAccountId(a.accountId) || normalizeAccountId(a.username) || '';
+    try { globalThis.localStorage?.setItem(ACCT_KEY, JSON.stringify({ token: a.token, accountId, username: a.username })); } catch { /* ignore */ }
   },
   clear() {
     try { globalThis.localStorage?.removeItem(ACCT_KEY); } catch { /* ignore */ }
   },
   /**
-   * Drop the bearer but remember the username: the server did not accept this credential (its account store was
-   * wiped / replaced — net.js `_accountRejected`), so presenting it again would only repeat the refusal, while the
-   * login form still prefills who this browser was playing as (`lastUsername`). A later login writes both back.
+   * Drop the bearer but remember the account ID and username: the server did not accept this credential (its account
+   * store was wiped / replaced — net.js `_accountRejected`), so presenting it again would only repeat the refusal,
+   * while the login form still prefills the account ID (`lastAccountId`) and a recovery registration can ask for the
+   * same ID again (`lastAccountId`), keeping the seat / local data keyed by it.
    */
   forget() {
     const acct = this.read();
     try {
-      if (acct) globalThis.localStorage?.setItem(ACCT_KEY, JSON.stringify({ username: acct.username }));
+      if (acct) globalThis.localStorage?.setItem(ACCT_KEY, JSON.stringify({ accountId: acct.accountId, username: acct.username }));
       else globalThis.localStorage?.removeItem(ACCT_KEY);
     } catch { /* ignore */ }
   },
@@ -1115,6 +1124,11 @@ export const accountStore = {
       const o = JSON.parse(globalThis.localStorage?.getItem(ACCT_KEY) || 'null');
       return o && typeof o.username === 'string' ? o.username : '';
     } catch { return ''; }
+  },
+  /** The account ID of the last account used on this browser, also after `forget()` ('' when there is none). */
+  lastAccountId() {
+    try { return accountIdOf(JSON.parse(globalThis.localStorage?.getItem(ACCT_KEY) || 'null')); }
+    catch { return ''; }
   },
 };
 

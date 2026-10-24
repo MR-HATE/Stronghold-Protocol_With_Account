@@ -70,14 +70,14 @@ export async function createSessionStack(opts, { data, log, content = null, plug
   // The account store is optional: a store that cannot be read/created (a read-only home, a typo'd
   // ACCOUNTS_DIR) must not stop the server — the player simply cannot log in until it is fixed.
   let accounts = opts.accounts ?? null;
-  if (!accounts) {
-    try {
-      accounts = new AccountStore({ dir: accountsDirFrom(opts), log });
-      await accounts.load();
-    } catch (e) {
-      log.error('[accounts] disabled: cannot load the account store', e);
-      accounts = null;
-    }
+  try {
+    if (!accounts) accounts = new AccountStore({ dir: accountsDirFrom(opts), log });
+    // A store passed in (a test, an embedding) must be loaded too: sessionForAccount's synchronous lookup only sees
+    // an opened database.
+    await accounts.load?.();
+  } catch (e) {
+    log.error('[accounts] disabled: cannot load the account store', e);
+    accounts = null;
   }
   const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, content, plugins, hosts, options: lobbyOptions, accounts });
   const network = new Network({ registry, handler: lobby, log, options: netOptions });

@@ -25,8 +25,8 @@ import { STATS_VERSION, STATS_MAX_RECORDS } from '../shared/constants.js';
 
 /**
  * JSON bytes one account's mirror may hold (the client sends at most this: public/js/ui/stats.js SYNC_MAX_BYTES).
- * Small on purpose: a push arrives over the same socket as the client's 4-second latency probe and makes this store
- * rewrite `accounts.json` whole, so the mirror is a window of ~25 compacted matches, not a full history.
+ * Small on purpose: a push arrives over the same socket as the client's 4-second latency probe and makes the account
+ * store write the merged rows (SQLite), so the mirror is a window of ~25 compacted matches, not a full history.
  */
 export const STATS_MAX_BYTES = 16_000;
 /** Bytes of one single record: a record bigger than this is dropped rather than stored (a client cannot build one). */

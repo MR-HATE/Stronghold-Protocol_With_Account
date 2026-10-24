@@ -80,7 +80,7 @@ describe('accounts × the real client: a 干员调配 survives the 游客 round 
 
       // 1) register and enter as the account
       const reg = await net.request('auth.register', { username: 'RoundTrip', password: 'pw1234' }, { timeout: 10_000 });
-      accountStore.write({ token: reg.token, username: reg.username });
+      accountStore.write({ token: reg.token, accountId: reg.accountId, username: reg.username });
       guestStore.write(false);
       enterSession('RoundTrip');
       await waitFor(() => net.status === 'online', 5000, 'the session to come online');
@@ -88,7 +88,7 @@ describe('accounts × the real client: a 干员调配 survives the 游客 round 
       // 2) import a preset (the path 导入 uses), which the sync must store on the account
       const imported = applyLoadoutEntries({ [CHESS]: { skill: 0 } }, (id) => (id === CHESS ? CH : null));
       assert.deepEqual([imported.applied, imported.dropped], [1, 0], JSON.stringify(imported));
-      await waitFor(() => store.accounts.get('roundtrip')?.loadout?.[CHESS]?.skill === 0, 5000, 'the account to receive the import');
+      await waitFor(() => store.lookupToken(reg.token)?.loadout?.[CHESS]?.skill === 0, 5000, 'the account to receive the import');
       const saved = (await store.resolveToken(reg.token)).loadout;
       assert.deepEqual(saved[CHESS], { skill: 0, module: 'uniequip_002_inside' });
 
@@ -102,8 +102,8 @@ describe('accounts × the real client: a 干员调配 survives the 游客 round 
       assert.deepEqual((await store.resolveToken(reg.token)).loadout, saved, 'the account copy is untouched');
 
       // 4) sign in again the way submitAuth does: apply the reply, then enter
-      const login = await net.request('auth.login', { username: 'RoundTrip', password: 'pw1234' }, { timeout: 10_000 });
-      accountStore.write({ token: login.token, username: login.username });
+      const login = await net.request('auth.login', { accountId: reg.accountId, password: 'pw1234' }, { timeout: 10_000 });
+      accountStore.write({ token: login.token, accountId: login.accountId, username: login.username });
       assert.deepEqual(login.loadout, saved, 'auth.result carries the account copy');
       setOpsMap(parseStoredOps({ ops: login.ops || {} }));
       setEntries(parseStored(login.loadout));

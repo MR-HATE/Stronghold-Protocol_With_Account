@@ -185,6 +185,7 @@ export async function startServer(opts = {}) {
     }
   } catch (e) {
     network.close(); // stop heartbeat/sweep timers of the half-built server
+    accounts?.close();
     assetIndex?.close();
     studio?.close();
     await trustedRuntime?.close();
@@ -204,6 +205,7 @@ export async function startServer(opts = {}) {
       try { lobby.shutdown('shutdown'); } catch (e) { log.error('[shutdown] lobby', e); }
       try { hosts.close(); } catch (e) { log.error('[shutdown] match hosts', e); }
       network.close();
+      try { accounts?.close(); } catch (e) { log.error('[shutdown] accounts', e); }
       assetIndex?.close();
       studio?.close();
       await trustedRuntime?.close();

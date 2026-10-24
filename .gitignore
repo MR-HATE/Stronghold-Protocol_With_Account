@@ -54,6 +54,12 @@ logs/
 scripts/service.env.cmd
 .env
 .env.*
+# the optional account store (ACCOUNTS_DIR is outside the repository by default; never commit a copy)
+accounts.db
+accounts.db-wal
+accounts.db-shm
+accounts.json
+accounts.json.imported
 
 # --- OS / editor clutter ---------------------------------------------------------------------------
 .DS_Store

@@ -1,4 +1,5 @@
-// Browser-local dub preferences. Every variant of an operator shares its charId; absent entries follow the global dub.
+// Dub preferences (stored with the browser settings; signed in, the settings document mirrors them to the account).
+// Every variant of an operator shares its charId; absent entries follow the global dub.
 // Global settings.voiceLang is one of VOICE_LANGS. A per-operator override may also be 'native' (the operator's
 // own-language dub, audio.voiceNative). audio.js re-exports VOICE_TREES and plays the tree voiceLangFor picks.
 

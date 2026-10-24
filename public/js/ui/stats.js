@@ -70,7 +70,7 @@ export const IMPORT_MAX_CHARS = 8_000_000;
 /**
  * Budget of the JSON the account mirror may hold, in BYTES (server/stats.js STATS_MAX_BYTES): what a `stats.push`
  * frame carries. Kept small on purpose — this frame shares the socket with the 4-second latency probe (ui/statsSync.js
- * sends it right after a pong) and every push makes the server rewrite `accounts.json`, so the mirror is a window of
+ * sends it right after a pong) and every push writes the account's rows in SQLite, so the mirror is a window of
  * ~25 compacted matches rather than everything. The local copy above keeps the whole history.
  */
 export const SYNC_MAX_BYTES = 16_000;
@@ -82,7 +82,7 @@ const OWNER_KEY = `${FULL_KEY}Owner`;
 /** What this browser last handed to which account (`sp.pref.statsSync`): see statsSyncState. */
 const SYNC_STATE_KEY = `${FULL_KEY}Sync`;
 
-/** @returns {string|null} the account key (lowercased username) the local history belongs to, or null when no account ever claimed it */
+/** @returns {string|null} the stable account ID the local history belongs to, or null when no account ever claimed it */
 export function statsOwner() {
   try {
     const v = globalThis.localStorage?.getItem(OWNER_KEY);
@@ -792,7 +792,7 @@ function byteLength(s) {
  * Compact-only is deliberate. The mirror's job is the numbers (aggregates, the history list, the difficulty and
  * strategy tables) and those read the compact shape; keeping full rows would spend a 7 KB match on what a 600-byte
  * summary already says, and every byte here is a byte that shares the socket with the latency probe (net.js pings
- * every 4 s) and costs a rewrite of `accounts.json` on the server. The device that PLAYED a match keeps its full
+ * every 4 s) and costs a row write on the account's SQLite mirror. The device that PLAYED a match keeps its full
  * rows locally (FULL_KEEP), so only a settlement re-viewed from another device is affected — the history row says so.
  * @param {{ records?: any[] }} stats newest first
  * @param {number} [maxBytes]
@@ -859,7 +859,7 @@ function withoutCleared(stats, clearedAt) {
  * An envelope of a NEWER format on either side is left alone (`blocked`): this build must never downgrade it, which is
  * the rule loadStats / importStats follow too (the local copy is not overwritten, the payload is not merged into it).
  * @param {{ records?: any[] } | null | undefined} payload the account's mirror (null when it has none yet)
- * @param {{ key?: string|null, clearedAt?: number|null }} [info] verified account key + the last 清空 stamp
+ * @param {{ key?: string|null, clearedAt?: number|null }} [info] verified stable account ID + the last 清空 stamp
  * @returns {{ stats: { v: number, records: any[] }, added: number, replaced: boolean, cleared: number, blocked: boolean }}
  *   added = records the local history did not have; replaced = a foreign history was dropped for this account;
  *   cleared = local records dropped by the 清空 stamp; blocked = a newer-format envelope was left untouched

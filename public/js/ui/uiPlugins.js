@@ -1,6 +1,7 @@
-// ui/uiPlugins.js — this browser's interface plugins (DESIGN §32.8). Kept in localStorage, never sent:
-//   sp.pref.ui-plugins     the ids the player turned on (设置 → 界面插件)
-//   sp.pref.ui-recommend   the ids the host marked 推荐 on this browser
+// ui/uiPlugins.js — this browser's interface plugins (DESIGN §32.8). Kept in localStorage:
+//   sp.pref.ui-plugins     the ids the player turned on (设置 → 界面插件); signed in, the list follows the account
+//                          through the settings document (ui/settingsSync.js), never to a room or another player
+//   sp.pref.ui-recommend   the ids the host marked 推荐 on this browser (local only, not part of the account document)
 // A recommendation does not turn a plugin on. Another player's page cannot see this browser's mark until the protocol
 // supplies the list on the existing room.state (read here if it is already an array: room.uiRecommend,
 // room.content.uiRecommend, room.state.uiRecommend, room.state.content.uiRecommend). No new protocol message.

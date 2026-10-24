@@ -59,6 +59,22 @@ A room's **host is not part of it**: an appearance a player wears comes from *th
 `scope: ["personal"]` never appears in the room's 插件 panel and no room setting can force a skin on anyone. Two players
 of the same co-op match may therefore see different models for the same piece — see the switch below.
 
+## Account sync (fork)
+
+The choice follows the account (extension §account): `accounts.skins_json` stores the same `{ [charId]: skinId }` map
+that `room.skins` carries. There are two distinct values:
+
+- `null` — the account has never stored a choice; the browser's local `sp.pref.skins` / a guest session is kept, and the
+  next `room.skins` seeds the account;
+- `{}` — the player explicitly cleared every skin; it is stored and applied, so clearing is not undone by the next login.
+
+`auth.result` and `welcome.accountSkins` carry the account copy (`welcome` also covers a resumed session with no login).
+The client applies it to `skinsStore` before `installSkinsSync` sends the post-welcome `room.skins`, exactly like the
+loadout; `server/lobby.js skins()` writes every accepted `room.skins` back to the account. The live room / match still
+works on the session/seat copy (`session.skins` / `seat.skins`) and the wire rules do not change: a skin unknown to the
+room's data is dropped by `checkSkinSelection`, and a skinId the manifest does not have draws the default model. The
+skin selection is **public** as before: teammates see it through `m.public`.
+
 ## 设置「显示其他玩家的皮肤」 (default on)
 
 A pure client preference (`settings.otherSkins`, `sp.pref.settings`; **never sent**):

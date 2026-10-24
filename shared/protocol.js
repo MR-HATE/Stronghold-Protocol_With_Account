@@ -6,6 +6,7 @@ import { isDroppableChess } from './standIn.js';
 import { diySlotIds, validateDiyPicks } from './diy.js';
 import { cultivatedStats, isPotential, isCultivate, POTENTIAL_DEFAULT, CULTIVATE_DEFAULT, hasPotentialData } from './potential.js';
 import { isContentHash } from './plugins/identity.js';
+import { isSettingsDoc } from './settingsSync.js';
 import { isPluginId } from './plugins/manifest.js';
 import { isTestCommand } from './testMode.js';
 import { PLUGIN_OFFER_SLOTS } from './plugins/limits.js';
@@ -517,12 +518,18 @@ export const C2S = {
     noReplace: isBool, claimAt: (v) => isNum(v, 0, Number.MAX_SAFE_INTEGER),
     // account extension (§account): the token issued by auth.register / auth.login, and the username as a hint
     // only — the server resolves the token and uses ITS username, so a spoofed one is ignored
-    account: (v) => v == null || isStr(v, 64), accountName: (v) => v == null || isStr(v, NAME_MAX_LEN),
+    account: (v) => v == null || isStr(v, 64), accountName: (v) => v == null || isStr(v, 64),
     $optional: ['name', 'token', 'version', 'noReplace', 'claimAt', 'account', 'accountName'] },
   // account extension (§account): the title screen logs in before it has a session. Answered with `auth.result`
-  // { ok, token, username, loadout, ops } (net.js answer) — never the generic `ok`.
-  'auth.register': { username: (v) => typeof v === 'string' && /^[a-zA-Z0-9_\-.]{2,24}$/.test(v), password: (v) => typeof v === 'string' && v.length >= 4 && v.length <= 128 },
-  'auth.login': { username: (v) => typeof v === 'string' && /^[a-zA-Z0-9_\-.]{2,24}$/.test(v), password: (v) => typeof v === 'string' && v.length >= 1 && v.length <= 128 },
+  // { ok, accountId, token, username, loadout, ops } (net.js answer) — never the generic `ok`.
+  // `auth.register.username` is the DISPLAY name (any script, not a credential, not unique); `accountId` is only a
+  // recovery hint from this browser for an account store it just lost — the server still generates ids normally.
+  'auth.register': { username: (v) => typeof v === 'string' && v.length >= 1 && v.length <= 64, accountId: (v) => v == null || isStr(v, 64), password: (v) => typeof v === 'string' && v.length >= 4 && v.length <= 128, $optional: ['accountId'] },
+  // The stable account ID signs in. `username` is accepted as a legacy alias and read as an ACCOUNT ID (an existing
+  // player's old username is its migrated id); a display username never authenticates here.
+  'auth.login': { accountId: (v) => v == null || isStr(v, 64), username: (v) => v == null || isStr(v, 64), password: (v) => typeof v === 'string' && v.length >= 1 && v.length <= 128, $optional: ['accountId', 'username'] },
+  // Change the display username at any time (including during a room / match). The account ID and token do not change.
+  'auth.rename': { username: (v) => typeof v === 'string' && v.length >= 1 && v.length <= 64 },
   // leave the account without leaving the session: the session stops carrying (and writing to) the account, so a
   // 游客 keeps playing as the callsign and the account's saved 干员调配 is left untouched. Idempotent; `ok`.
   'auth.logout': {},
@@ -534,6 +541,11 @@ export const C2S = {
   'stats.push': { stats: isStatsPayload },
   'stats.pull': {},
   'stats.clear': {},
+  // account extension (§account): the 设置 + personal-plugin switches document (shared/settingsSync.js) —
+  // `settings.push {settings}` stores it whole (last writer wins), `settings.pull` answers `settings.sync
+  // {settings, updatedAt}`. A 游客's frames are no-ops, like stats.*. The server never interprets a field.
+  'settings.push': { settings: isSettingsDoc },
+  'settings.pull': {},
   ping: { c: (v) => typeof v === 'number' && Number.isFinite(v) },
   // test: only the literal true (DESIGN §34.8). Omit it for a normal room — `false` is a bad field, so a
   // string cannot sneak in as "not a test". The server still refuses it unless SP_TEST_MODE is on.

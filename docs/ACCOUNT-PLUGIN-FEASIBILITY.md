@@ -4,6 +4,9 @@
 > [PLUGINS.md](PLUGINS.md)）把本 fork 的账号与同步系统改写成插件？如果不能，差在哪里，需要补什么，以及在不改
 > 上游的前提下更划算的做法是什么。
 >
+> **后续变化**：账号存储已换成 SQLite（`accounts.db`，见 [ACCOUNT-SQLITE-DESIGN.md](ACCOUNT-SQLITE-DESIGN.md)），
+> 同步内容增加了设置与个人插件开关；这些都不改变本文的结论（插件 API 仍没有 WS 帧 / 会话身份 / 同步查表的位置）。
+>
 > 相关文档：[FORK_NOTES.md](FORK_NOTES.md)（本 fork 相对上游的全部改动）、[PLUGINS.md](PLUGINS.md)（插件系统的参考）、
 > [design/network.md](design/network.md) §8.1、[docs/history/0.3.0.md](history/0.3.0.md)（0.3.0 的设计与阶段）。
 
@@ -55,7 +58,7 @@
 |---|---|---|---|
 | C1 | intent 分发 | `auth.register` / `auth.login` / `auth.logout` / `stats.push` / `stats.pull` / `stats.clear` 进 net.js 的意图表与验证器（[protocol.js](../shared/protocol.js#L434-L452)、[net.js](../server/net.js#L694-L751)） | ✗ 插件没有注册 intent 的入口 |
 | C2 | hello 时的同步 token → 座位 | `net.js` 在铸造会话**之前**同步调用 `handler.sessionForAccount(account)`（[net.js](../server/net.js#L792)），底层是 `AccountStore.lookupToken()` 的内存 Map | ✗ 插件跑在另一个子进程，同步查表要 IPC |
-| C3 | 「账号名就是代号」 | 登录态的 `hello` 不带 `name`，由服务端解析并改名（[lobby.js](../server/lobby.js#L732-L760)） | ✗ 无法改会话的 `name` |
+| C3 | 「用户名就是代号」 | 登录态的 `hello` 不带 `name`，由服务端解析并改名（[lobby.js](../server/lobby.js#L732-L760)；当时登录也用用户名，现已改为稳定账号 ID） | ✗ 无法改会话的 `name` |
 | C4 | `welcome` 顺序 | `welcome` 先于房间 / 对局状态重发（[FORK_NOTES.md](FORK_NOTES.md) 第 3 节） | ✗ 无法介入握手时序 |
 | C5 | 座位归属与隔离 | `SessionRegistry.byAccountMap`、`dropForeignSeat` / `releaseForeignSeat`、`room.closed {reason:'account'}`（[lobby.js](../server/lobby.js#L762-L790)、[net.js](../server/net.js#L182-L248)） | ✗ 无法绑定 / 释放在场会话 |
 | C6 | 干员调配落盘 | `lobby.js` 在 `room.loadout` 处理里把 `loadout`/`ops` 写进账号 | ✗ 无法拦截其它 intent |

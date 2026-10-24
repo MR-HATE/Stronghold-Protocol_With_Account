@@ -620,7 +620,7 @@ describe('net.js', () => {
       ws().recv({ t: 'welcome', rid: hello.rid, playerId: 'p_1', token: 't', name: longName, accountName: longName, serverNow: Date.now() });
       assert.equal(net.status, 'online');
       assert.equal(net.serverName, longName, 'the welcome carries the verified name');
-      assert.equal(globalThis.localStorage.getItem('sp.account'), JSON.stringify({ token: 'a'.repeat(64), username: longName }), 'the account stays remembered');
+      assert.equal(globalThis.localStorage.getItem('sp.account'), JSON.stringify({ token: 'a'.repeat(64), accountId: longName, username: longName }), 'the account stays remembered');
     } finally {
       if (orig === undefined) delete globalThis.localStorage;
       else globalThis.localStorage = orig;
@@ -647,9 +647,10 @@ describe('net.js', () => {
       // The server no longer knows the token (accounts.json was wiped with a rebuilt container): its `welcome`
       // carries no `accountName`, and the session it opens is a 游客's named 博士 — an account hello sends no callsign.
       ws().recv({ t: 'welcome', rid: hello.rid, playerId: 'p_9', token: 't2', name: '博士', serverNow: Date.now() });
-      assert.deepEqual(net.accountRejected, { username: 'Alice' }, 'the app is told which account failed');
+      assert.deepEqual(net.accountRejected, { username: 'Alice', accountId: 'alice' }, 'the app is told which account failed');
       assert.equal(accountStore.read(), null, 'the dead bearer is gone: it is never presented again');
       assert.equal(accountStore.lastUsername(), 'Alice', 'the login form still knows the username');
+      assert.equal(accountStore.lastAccountId(), 'alice', 'and the stable account ID, for a recovery registration');
       assert.equal(net.status, 'online', 'the session itself is a usable one');
       // …and the transport does NOT quietly install a guest identity: no second hello, the session keeps the server's
       // fallback name until the player signs in again or picks 以游客身份继续 themselves (main.js keeps them out).
@@ -1301,7 +1302,7 @@ describe('screen helpers', () => {
       globalThis.WebSocket = class { constructor(url) { opened.push(url); this.readyState = 0; } send() {} close() {} };
       net.close();          // a known starting point for the module singleton
       net._manualClose = false;
-      // a 23-char username (USERNAME_RE allows 24) is longer than a callsign (NAME_MAX_LEN 12)
+      // a 23-char username (ACCOUNT_NAME_MAX allows 24) is longer than a callsign (NAME_MAX_LEN 12)
       const long = 'long_name_24_chars_okay';
       accountStore.write({ token: 'b'.repeat(64), username: long });
       assert.equal(enterAsAccount(), true);

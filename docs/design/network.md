@@ -25,13 +25,21 @@ selection/stamp rules live in design/client.md. In-flight protection requires th
 `hello` also accepts `account` (the 64-hex token issued by `auth.register` / `auth.login`) and `accountName` (a hint
 the server never trusts); `hello.name` becomes optional (a name is required only from a frame without a token), because
 the username is the in-game name and a username is longer (24) than `NAME_MAX_LEN` (12). `auth.register {username,
-password}` and `auth.login {username, password}` may be sent before `hello` (the title screen has no session yet —
-net.js mints a provisional placeholder session for these frames, flagged `Session.provisional`: the next `hello` runs
-its normal identity lookup as if the socket had none, and reuses the placeholder when nothing matched, so a login on a
-second device can still reach the account's seat); they answer `auth.result {ok, token, username, loadout, ops}` instead
-of the generic `ok`, with `BAD_MSG` for a refused login / a bad shape and `ALREADY` for a taken username. The store
-holds `accounts.json` (scrypt + per-user salt, atomic writes) in `ACCOUNTS_DIR` (default `<home>/data`, i.e. outside
-the repository, so updating the game never touches it).
+password, accountId?}` takes a DISPLAY name and returns the server-generated stable **account ID** (`accountId`);
+`auth.login {accountId, password}` signs in with that ID (the old `username` field is accepted as a legacy alias and
+read as an account ID — it never authenticates as a display name). `auth.rename {username}` changes the display name at
+any time (`auth.result {accountId, username, token}`); the account ID and bearer do not change. These frames may be sent
+before `hello` (the title screen has no session yet — net.js mints a provisional placeholder session for them, flagged
+`Session.provisional`: the next `hello` runs its normal identity lookup as if the socket had none, and reuses the
+placeholder when nothing matched, so a login on a second device can still reach the account's seat); they answer
+`auth.result {ok, accountId, token, username, loadout, ops, skins?, stats?, settings?}` instead of the generic `ok`, with
+`BAD_MSG` for a refused login / a bad shape and `ALREADY` for an account ID that is already registered (a display-name
+duplicate is allowed). The store
+is a SQLite database `accounts.db` (`node:sqlite`, no extra dependency; schema version 1; WAL + one transaction per
+write) in `ACCOUNTS_DIR` (default `<home>/data`, i.e. outside the repository, so updating the game never touches it).
+An older build's `accounts.json` in the same directory is imported once, in one transaction, and kept as
+`accounts.json.imported`; a corrupt one disables the account store (logged) instead of silently starting empty.
+`AccountStore.close()` is part of `server/index.js`'s close path (Windows file handles).
 
 **One bearer per account.** The token is issued once and every later `login` returns the same one (a record without a
 token gets one on its next login). That is what makes the seat portable: the lobby resolves the token to the account
@@ -40,9 +48,10 @@ one holds. A token rotated per login would strand it — the first device would 
 lose its verified name to the next `hello`. It is a password-equivalent secret with no revocation and no device list
 (the extension is deliberately not a full auth system).
 
-**The seat follows the account.** `SessionRegistry.byAccountMap` maps the account KEY (lowercased username) → the
+**The seat follows the account.** `SessionRegistry.byAccountMap` maps the stable ACCOUNT ID → the
 session holding its seat, and net.js asks the lobby (`sessionForAccount`, a synchronous `AccountStore.lookupToken`
-against the in-memory store) before it mints a session for a `hello { account }` frame. So the same account opening
+against the in-memory store) before it mints a session for a `hello { account }` frame. Renaming the display username
+does not touch this id, so the seat follows the account through a rename. So the same account opening
 the game elsewhere — another tab, browser or device, after a real password login — resumes that session and its
 running match: `welcome.resumed` is set and the ordinary reconnect path re-pushes `room.state` plus the match state
 (`Match.onReconnect`, or the result replay in the lobby) exactly as a reloaded tab does, while the old socket is
@@ -52,25 +61,27 @@ lives in server memory (a restart ends the run). The account's frame is allowed 
 account takes that account's seat over.
 
 The lobby resolves the token in `onHello` — which net.js awaits **before** sending `welcome`, so the verified name
-travels in the first frame and no rename is ever broadcast. A verified account: (a) sets `session.name` to its
+travels in the first frame and a hello never renames a session on the fly (an explicit `auth.rename` does broadcast). A verified account: (a) sets `session.name` to its
 username, overriding whatever the frame asked for (no name spoofing; a client cannot take another account's name);
-(b) binds the session to the account key in `SessionRegistry.byAccountMap` (see above); (c) pulls the account's saved
-`loadout` / `ops`, and every later `room.loadout` is written back to it. An unknown / revoked token is inert: it is
-detached from the session (its account map entry is released, but `session.accountKey` stays — the seat still belongs
-to that account), the frame's own name (or `DEFAULT_NAME` when it sent none) stands, and the player still enters.
-`welcome.accountName` (via the lobby's `welcomeInfo(session)`) carries the verified name — which makes a `welcome`
-WITHOUT it the client's signal that the credential it presented was not accepted (an account hello sends no callsign,
-so such a session is a 游客's named 博士). The client then forgets the dead bearer (the username stays, for the login
-form) and REFUSES to play on: `net.accountRejected` makes the welcome handler drop back to the title screen with the
-账号已失效 dialog, which offers 重新登录 / 注册 (prefilled with that username) and 以游客身份继续
-(`public/js/net.js _forgetRejectedAccount`, `main.js onWelcome`, `screens/title.js`) — a session that looks signed in
-must never be handed to the player as if nothing happened. A rebuilt server with no `ACCOUNTS_DIR` volume wipes its
-account store (`docs/DEPLOY.md` §3), which is exactly how a browser that remembered an account meets this. Registering
-the same username again recovers the local 干员调配 and 对局统计 (both are keyed by account key, and the empty mirror
-is filled by the first push).
+(b) binds the session to the stable account ID in `SessionRegistry.byAccountMap` (see above); (c) pulls the account's
+saved `loadout` / `ops`, and every later `room.loadout` is written back to it. An unknown / revoked token is inert: it
+is detached from the session (its account map entry is released, but `session.accountKey` stays — the seat still
+belongs to that account), the frame's own name (or `DEFAULT_NAME` when it sent none) stands, and the player still
+enters. `welcome.accountName`, `welcome.accountId` and (when the account has a stored choice) `welcome.accountSkins`
+(via the lobby's `welcomeInfo(session)`) carry the verified username, the stable ID and the 干员皮肤 copy — a `welcome`
+WITHOUT `accountName` is the client's signal that the credential it presented
+was not accepted (an account hello sends no callsign, so such a session is a 游客's named 博士). The client then
+forgets the dead bearer (the username and account ID stay, for the login form / recovery) and REFUSES to play on:
+`net.accountRejected` makes the welcome handler drop back to the title screen with the 账号已失效 dialog, which offers
+重新登录 / 注册 (prefilled with that username) and 以游客身份继续 (`public/js/net.js _forgetRejectedAccount`,
+`main.js onWelcome`, `screens/title.js`) — a session that looks signed in must never be handed to the player as if
+nothing happened. A rebuilt server with no `ACCOUNTS_DIR` volume wipes its account store (`docs/DEPLOY.md` §3), which is
+exactly how a browser that remembered an account meets this. Registering again with the same account ID (the client
+sends its remembered ID as a recovery hint) recovers the local 干员调配, 对局统计 and 设置 (all keyed by account ID;
+the empty mirror is filled by the first push).
 
-**Isolation — a seat is restored only into the account that took it.** Every session carries `accountKey`: the account
-identity its seat belongs to, assigned when a verified account is adopted and never handed to another. Whenever an
+**Isolation — a seat is restored only into the account that took it.** Every session carries `accountKey`: the stable
+account ID its seat belongs to, assigned when a verified account is adopted and never handed to another. Whenever an
 account is verified on a session — `auth.login` / `auth.register` attach it there, and `accountHello` does it for the
 token a `hello` carries — a session whose `accountKey` differs is released first (`Lobby.dropForeignSeat` →
 `releaseForeignSeat`): a permanent departure, `room.leave`-style — a lobby seat is freed, a running match is told
@@ -116,6 +127,30 @@ instead of adopting somebody else's matches, and a history no account has claime
 that signs in — the same rule the seat and the 干员调配 follow. This is the only way statistics leave the browser, so the
 stats page says which case it is in (已登录 {name} / 本机数据), and a record that only travelled as a summary says so
 where the settlement replay would be offered.
+
+**Settings, plugin switches and the host's room-plugin choice.** The 设置 document follows the account too, as one
+client-owned document (`shared/settingsSync.js`):
+`{ v, game, plugins: { cosmetic: [id…], ui: [id…], room: [{ id, settings? }…] } }`. `settings.push {settings}` stores it
+whole (last writer wins; the server validates the envelope, size and plugin ids, never a field of `game`), and
+`settings.pull` answers `settings.sync {settings, updatedAt}` instead of a bare `ok` (net.js `answer`). `auth.result`
+carries `settings` / `settingsUpdatedAt` as well, so the title screen applies the account's copy before entering. The
+client pulls and applies it after every `welcome`, and pushes after a debounced edit; applying the account's copy does
+not push it back, and an account with no document is seeded from the first browser that signs in. A 游客's frames are
+no-ops. `game` is the sanitised settings store (volumes, 语音语言, 伤害数字, 画质, 文字大小, 快捷键 …); `plugins.cosmetic`
+/ `plugins.ui` are the player's own 外观插件 / 界面插件 switches; `plugins.room` is the host's remembered 插件 panel
+choice (ids + manifest settings). The room's live set and its `cs` / `vs` hashes are NOT part of this document: a
+remembered `plugins.room` is only applied to a freshly created room through the ordinary `room.setPlugins` (the server
+still checks policy / missing plugins / phase), and refused choices are not forced. A ui plugin's private
+`sp.plugin.<id>.` storage is not included. The interface language (`sp.pref.lang`) stays local too: it has its own
+pack-loading / restart semantics, separate from the settings store. Local settings are not cleared on logout — they
+stay this browser's preferences until the next account's copy replaces them on sign-in.
+
+**干员皮肤 follows the account too.** The `{ [charId]: skinId }` map of `room.skins` (docs/SKINS.md) is stored on the
+account (`accounts.skins_json`, schema v2) and travels in `auth.result.skins` / `welcome.accountSkins`; the client
+applies it to `skinsStore` before the post-welcome `room.skins` send, and `lobby.skins()` writes every accepted
+`room.skins` back. `null` means "never stored" (keep the browser's / guest's choice and let the next `room.skins` seed
+it); `{}` is a deliberate clear and is applied. The live room still uses `session.skins` / `seat.skins` and the wire
+rules of `room.skins` are unchanged.
 
 **Never create an account's copy as empty:** `AccountStore.saveLoadout` ignores a write whose entries and `ops` are
 both empty when the account has nothing stored yet — that is a session that has not received the account's copy (or a

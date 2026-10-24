@@ -5,7 +5,7 @@
 
 ## 1. 准备环境
 
-需要 Node.js 22 或 24（CI 在这两个版本上跑）。
+需要 Node.js 22.13+ 或 24（CI 在这两个版本上跑；账号存储用了 Node 自带的 `node:sqlite`）。
 
 ```bash
 git clone https://github.com/MR-HATE/Stronghold-Protocol_With_account_and_sync.git
@@ -108,7 +108,7 @@ SIM_E2E=1 node --test 'test/sim/*.browser.test.js'               # 浏览器里�
 
 ## English summary
 
-- **Setup**: Node.js 22 or 24; `npm install`, `npm run setup` (art and audio — optional for tests), `npm run dev`.
+- **Setup**: Node.js 22.13+ or 24 (`node:sqlite`); `npm install`, `npm run setup` (art and audio — optional for tests), `npm run dev`.
   The code map is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Tests**: run the targeted files (`node --test <file>`, `--test-name-pattern`), then `npm test` and
   `npm run golden` before a pull request (a bare `node --test` also runs the helpers and fixtures under test/);

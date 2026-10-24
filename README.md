@@ -22,10 +22,11 @@ English summary: [below](#english).
 
 本仓库是 [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol) 的 fork：**游戏本体、规则、数值与文档都来自上游，上游内容一律保留**，下面是本 fork 自己加的可选功能。上游已在 [#268](https://github.com/sganggs/Stronghold-Protocol/issues/268) 说明「不做账号和云存档」，所以这些改动只在 fork 里维护，不向上游提合并。
 
-- **账号与数据同步（可选）**：注册 / 登录后**账号名就是游戏内代号**（标题页不再另填代号）；干员调配（技能 / 模组、潜能 · 练度）与对局统计绑定账号，换设备、换浏览器或服务器重启都不会丢；**同一个账号在另一台设备登录会接回原来的座位**并还原进行中的对局（受与断线重连相同的时间窗限制，服务器重启后房间即结束），而不同账号的对局互不相通——在别人的账号座位上登录不会接手那一局。**不登录照样可以直接玩，未配置账号存储时行为与上游完全一致**；账号**不是访问控制**。
-  - 存档是一个 `accounts.json`，**刻意放在仓库之外**（环境变量 `ACCOUNTS_DIR`，默认开服机器的用户目录），更新游戏不会动它。Docker 部署要把它挂出来，否则重建容器会清空账号（见 [docs/DEPLOY.md](docs/DEPLOY.md)）。
-  - 服务器上已经没有这个账号时，客户端会提示「账号已失效」并要求重新登录 / 注册（用同一个账号名重新注册，本机的干员调配与统计数据会传回新账号），不会静默变成游客。
+- **账号与数据同步（可选）**：注册会得到一个**稳定的账号 ID**（登录用，不能改），**用户名只是游戏内代号**（随时可改，也不再要求全服唯一）；干员调配（技能 / 模组、潜能 · 练度）、干员皮肤、对局统计、游戏设置与个人插件开关绑定账号，换设备、换浏览器或服务器重启都不会丢；**同一个账号在另一台设备登录会接回原来的座位**并还原进行中的对局（受与断线重连相同的时间窗限制，服务器重启后房间即结束），而不同账号的对局互不相通——在别人的账号座位上登录不会接手那一局。**不登录照样可以直接玩，未配置账号存储时行为与上游完全一致**；账号**不是访问控制**。
+  - 存档是 SQLite 数据库 `accounts.db`（Node 自带的 `node:sqlite`，需要 Node ≥ 22.13），**刻意放在仓库之外**（环境变量 `ACCOUNTS_DIR`，默认开服机器的用户目录），更新游戏不会动它。Docker 部署要把它挂出来，否则重建容器会清空账号（见 [docs/DEPLOY.md](docs/DEPLOY.md)）。旧的 `accounts.json` 会自动导入并保留为 `accounts.json.imported`。
+  - 服务器上已经没有这个账号时，客户端会提示「账号已失效」并要求重新登录 / 注册（用同一个账号 ID 重新注册，本机的干员调配、统计数据和设置会传回新账号），不会静默变成游客。
   - 同步的对局统计是**较新的汇总记录**（不能回看结算，本机保留完整历史），游客的记录永不上传。
+  - 设置同步包含「设置」里的游戏设置、个人外观 / 界面插件开关，以及**房主上次在「插件」面板选的插件与插件参数**；新建自己主持的房间时会自动套用一次，仍按服务器的插件检查执行（房间的实时插件集与哈希不受影响）。
 - **游客登录提示**：未登录点「开始」先说明登录能同步什么（可以「以游客身份继续」，也可以勾「不再提示」），不会把登录表单直接弹到脸上。
 - **延迟胶囊显示口径**：胶囊数字改为「最近几秒的最低往返」，不再把本机页面卡顿算成网络延迟；控制台可以用 `__SP__.net.ping`（显示值）与 `__SP__.net.pingLast`（最近一次原始采样）对照。
 - **实现说明**：[docs/FORK_NOTES.md](docs/FORK_NOTES.md)（改动清单）、[docs/design/network.md](docs/design/network.md) §8.1（协议与账号规则）。
@@ -67,7 +68,7 @@ English summary: [below](#english).
 - **联防**：有人漏怪、又有人完美作战时，完美作战的队友带着阵容帮忙拦截漏掉的敌人。
 - **最终攻势与隐秘核心**：两人共享一个战场，全队共同削减同一条领袖血条；10 个敌方领袖，巨型领袖约 5×3 格的受击范围，以及官方的限伤规则。
 - **结算**：官方样式的个人战报和同盟结算页，卫戍认证等级（官方 60 级、每日防卫目标，按本机记录计算）；卫戍之星、不朽盟约、坚若磐石等 6 个结算称号。
-- **账号（可选）**：注册或登录后，**账号名就是你游戏内的博士代号**——标题页不再要求另填代号；干员调配（技能 / 模组、潜能 · 练度）绑定账号，换设备、换浏览器或服务器重启都不会丢；**对局也跟着账号走**：同一个账号在另一台设备登录会接回原来的座位并还原进行中的对局（与断线重连同样受时间窗限制，服务器重启后房间即结束），而不同账号的对局互不相通——在别人的账号座位上登录不会接手那一局；**统计数据**也同步到账号（账号上是较新的汇总记录、不能回看结算，本机保留全部；游客不上传）。不登录照样可以直接玩。
+- **账号（可选）**：注册会得到一个稳定的**账号 ID**（登录用），**用户名**是游戏内博士代号、随时可改；干员调配（技能 / 模组、潜能 · 练度）、干员皮肤绑定账号，换设备、换浏览器或服务器重启都不会丢；**对局也跟着账号走**：同一个账号在另一台设备登录会接回原来的座位并还原进行中的对局（与断线重连同样受时间窗限制，服务器重启后房间即结束），而不同账号的对局互不相通——在别人的账号座位上登录不会接手那一局；**统计数据、游戏设置与个人插件开关**也同步到账号（统计在账号上是较新的汇总记录、不能回看结算，本机保留全部；游客不上传）。不登录照样可以直接玩。
 - **断线重连**：同盟模拟断线后 10 分钟内重新打开页面即可回到原座位，掉线期间按原阵容自动作战，也可以「暂离」交给 AI 托管；独立模拟 24 小时内可以回来继续（同一个浏览器）。
 - **交互细节**：漏怪时顶栏用红字 + 「−N」标记待扣的目标生命值（结算时才扣除）；点选、拖放和配发装备都按地上的方格；购买、升级和机变选卡都需要点两次确认；只有一名玩家时除作战外不计时。
 - **画面与声音**：真实 Spine 小人、官方 BGM 与音效、表情（6 套 × 6 个）、作战特效；可选的官方 3D 棋盘（需要从本机客户端提取贴图）。
@@ -85,7 +86,7 @@ English summary: [below](#english).
 
 两种包都包含运行和部署文件，以及插件作者需要的工具、模板、Schemas、插件文档和战斗测试助手。完整开发测试与设计文档仍在源码仓库里。
 
-1. **安装 Node.js 22 或 24（LTS）**
+1. **安装 Node.js 22.13+ 或 24（LTS）**
    - Windows：在 PowerShell 里运行 `winget install OpenJS.NodeJS.LTS`，或到 <https://nodejs.org/zh-cn/download> 下载安装包。
    - macOS：`brew install node@22`，或到官网下载安装包。
    - Linux：发行版的包管理器、nvm 或 fnm。
@@ -115,7 +116,7 @@ npm start          # 启动服务器：http://localhost:3000
 
 | 项目 | 要求 |
 |---|---|
-| 开服的电脑 | Windows / macOS / Linux，Node.js 22 或 24（LTS）；磁盘约 1.2–1.4 GB（素材、依赖与本地提取的贴图、场景和特效：完整包解压后约 1.16 GB）；内存空闲约 100 MB，每局再加几 MB |
+| 开服的电脑 | Windows / macOS / Linux，Node.js 22.13+ 或 24（LTS）；磁盘约 1.2–1.4 GB（素材、依赖与本地提取的贴图、场景和特效：完整包解压后约 1.16 GB）；内存空闲约 100 MB，每局再加几 MB |
 | 玩家 | 支持 WebGL 的现代浏览器（Chrome / Edge / Firefox / Safari 最新版），电脑、手机或平板（横屏） |
 | 网络 | 首次进入游戏时，每位玩家要从开服的电脑下载几十 MB 素材（之后走浏览器缓存）；对局中流量很小。已有素材的玩家可以在标题画面点「导入素材包」（「下载完整素材」旁边），从素材包 zip、完整包 zip 或自己的 `public/assets` 文件夹导入，这部分美术不再从开服的电脑下载；需要 HTTPS 或 localhost（[docs/DEPLOY.md](docs/DEPLOY.md) 2.5 节）。0.3.0 的素材包 `Stronghold-Protocol-v0.3.0-assets.zip` 由维护者另行提供下载，不在 Releases 附件里 |
 
@@ -137,7 +138,7 @@ npm start          # 启动服务器：http://localhost:3000
 | `SP_NO_BROWSER` | 空 | 设为 `1` 时启动脚本不自动打开浏览器 |
 | `SP_BOT_EMOTES` | 空 | AI 队友的对局表情回应（战斗、整备、合成、联防、收礼时即刻的 `m.emote` 广播）；设为 `0` 时整体关闭 |
 | `SP_ASSET_INDEX` | 空 | 素材地址带内容哈希、浏览器长期缓存（0.2.6 起默认开启，哈希存在 `.cache/asset-hashes.json`）；设为 `0` 时关闭，素材清单原样下发 |
-| `ACCOUNTS_DIR` | `<用户主目录>/data` | 账号存档 `accounts.json` 的目录（可选账号功能）。刻意放在仓库之外，更新游戏不会影响它 |
+| `ACCOUNTS_DIR` | `<用户主目录>/data` | 账号数据库 `accounts.db` 的目录（可选账号功能）。刻意放在仓库之外，更新游戏不会影响它 |
 
 设置方式：macOS / Linux `PORT=8080 npm start`；PowerShell `$env:PORT=8080; npm start`；cmd `set "PORT=8080" && npm start`。健康检查：`GET /healthz`。
 
@@ -175,7 +176,7 @@ npm start          # 启动服务器：http://localhost:3000
 通用注意事项：
 
 - 游戏是**单个常驻 Node.js 进程 + WebSocket**（路径 `/ws`），只能跑一个实例，必须部署在域名根路径；Vercel 之类的 Serverless 平台和 GitHub Pages 之类的静态托管都不适用。反向代理要转发 WebSocket 升级。
-- 账号是**可选**的、只用来记住身份和干员调配（`accounts.json`，默认存在开服电脑的用户目录，可用环境变量 `ACCOUNTS_DIR` 改），**它不是访问控制**：知道地址的人都能进来。请只把地址发给朋友，不要公开发布，也不要搭建公开大厅；这同时能降低素材版权方面的风险。
+- 账号是**可选**的、只用来记住身份、干员调配、统计和设置（SQLite 数据库 `accounts.db`，默认存在开服电脑的用户目录，可用环境变量 `ACCOUNTS_DIR` 改），**它不是访问控制**：知道地址的人都能进来。请只把地址发给朋友，不要公开发布，也不要搭建公开大厅；这同时能降低素材版权方面的风险。
 - 有公网 IPv4 时也可以在路由器上做端口转发，但这会把家里的电脑直接暴露在公网上，优先考虑上面的方式。
 
 ## 操作
@@ -280,10 +281,10 @@ node tools/perfbench.mjs --cpu 1,4,6 --profile             # 真实战斗的帧�
 
 An **unofficial, non-commercial fan remake** of Arknights' seasonal auto-chess tower-defense mode *Stronghold Protocol: Alliance*, played in the browser: solo, or 1–4 player co-op (AI teammates can fill seats). Combat is simulated in each player's browser, so a low-power PC can host.
 
-- **Run:** download the full bundle `Stronghold-Protocol-v<version>.zip` (~800 MB, all the art inside, the Chinese, Japanese, English, Korean and own-language operator voices, the official battlefield scenes and the official battle effects included) from [Releases](../../releases/latest) — or the lite one, `…-lite.zip` (~25 MB), which downloads the art (~720 MB) on its first start; from 0.2.1 on, `…-update.zip` holds only the files changed since the earlier 0.2.x releases: stop the server, extract it over an existing 0.2.x folder and start again (the first start deletes the files the new version dropped and verifies the install) — install Node.js 22 or 24, then double-click `scripts\start-windows.bat` (Windows) or run `./scripts/start.sh` (macOS / Linux) and open <http://localhost:3000>. From source: `npm install && npm run setup && npm start` (setup downloads ~720 MB of art from public mirrors, the emotes and the how-to-play pages included; the official 3D board, some official HUD icons, two enemy models and 39 summon models are extracted from a local Arknights client — without one the game uses the 2D board and look-alike stand-ins (the summons show their avatars), and a server can copy `public/assets/local/` and `data/local-assets.json` from the full bundle of the same version).
+- **Run:** download the full bundle `Stronghold-Protocol-v<version>.zip` (~800 MB, all the art inside, the Chinese, Japanese, English, Korean and own-language operator voices, the official battlefield scenes and the official battle effects included) from [Releases](../../releases/latest) — or the lite one, `…-lite.zip` (~25 MB), which downloads the art (~720 MB) on its first start; from 0.2.1 on, `…-update.zip` holds only the files changed since the earlier 0.2.x releases: stop the server, extract it over an existing 0.2.x folder and start again (the first start deletes the files the new version dropped and verifies the install) — install Node.js 22.13+ or 24, then double-click `scripts\start-windows.bat` (Windows) or run `./scripts/start.sh` (macOS / Linux) and open <http://localhost:3000>. From source: `npm install && npm run setup && npm start` (setup downloads ~720 MB of art from public mirrors, the emotes and the how-to-play pages included; the official 3D board, some official HUD icons, two enemy models and 39 summon models are extracted from a local Arknights client — without one the game uses the 2D board and look-alike stand-ins (the summons show their avatars), and a server can copy `public/assets/local/` and `data/local-assets.json` from the full bundle of the same version).
 - **Languages:** Chinese (the default), English, 日本語, 한국어 and 繁體中文 — switch on the title screen or in Settings. Game texts come from the official clients; the Japanese, Korean and Traditional Chinese interface strings are machine translations (corrections welcome: [docs/I18N.md](docs/I18N.md)).
 - **Play with friends:** create a co-op room and share the 4-letter key or the `?room=KEY` link. On a LAN, use the address printed at start; otherwise use a virtual-LAN tool, a tunnel or a VPS — see [docs/DEPLOY.md](docs/DEPLOY.md).
-- **This fork adds (not upstream):** an optional account layer — register / sign in, the account name is your in-game name, the operator loadout and match statistics follow the account, and signing in on another device rejoins your seat and restores a running match (different accounts never inherit each other's rooms). Without it the game is exactly upstream: no account store, nothing sent, guests can still play. `accounts.json` lives outside the repository (`ACCOUNTS_DIR`) — on Docker mount it, or a rebuilt container loses the accounts. Upstream decided not to include accounts ([#268](https://github.com/sganggs/Stronghold-Protocol/issues/268)); see [docs/FORK_NOTES.md](docs/FORK_NOTES.md).
+- **This fork adds (not upstream):** an optional account layer — register / sign in with a stable server-generated account ID, while the username is only the in-game name (changeable anytime, not unique, never a credential). The operator loadout, operator skins, match statistics, game settings and personal plugin switches follow the account, and signing in on another device rejoins your seat and restores a running match (different accounts never inherit each other's rooms). Without it the game is exactly upstream: no account store, nothing sent, guests can still play. The SQLite database `accounts.db` lives outside the repository (`ACCOUNTS_DIR`) — on Docker mount it, or a rebuilt container loses the accounts; an old `accounts.json` is imported automatically. Upstream decided not to include accounts ([#268](https://github.com/sganggs/Stronghold-Protocol/issues/268)); see [docs/FORK_NOTES.md](docs/FORK_NOTES.md).
 - **Disclaimer:** not affiliated with or endorsed by Hypergryph or Yostar. All Arknights names, art, audio, text and data are © their respective owners and are **not** covered by this project's GPL licence. For study and personal non-commercial use only — no selling, paid distribution, paid servers or monetisation of any kind. Content will be removed on request of the rights holders. Provided "as is", without warranty.
 - **License:** code GPL-3.0-or-later ([LICENSE](LICENSE)); game assets excluded.
 - **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) (an English summary at its end); the code map is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

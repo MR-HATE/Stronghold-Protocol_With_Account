@@ -56,11 +56,11 @@ export function installStatsSync({ net, getAccount = () => null, isBusy = () => 
   /** Digest of the last payload this session pushed (the persisted statsSyncState is the cross-session record). */
   let lastSent = null;
 
-  /** The verified account key (lowercased username) of the remembered account, or null. */
+  /** The stable account ID of the remembered account, or null. (Never the mutable username.) */
   const accountKey = () => {
     const acct = getAccount();
-    const name = acct && typeof acct.username === 'string' ? acct.username.toLowerCase() : '';
-    return name || null;
+    const id = acct && typeof acct.accountId === 'string' ? acct.accountId : '';
+    return id || null;
   };
   const signedIn = () => accountKey() != null;
 

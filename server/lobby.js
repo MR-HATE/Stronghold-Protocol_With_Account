@@ -690,12 +690,17 @@ export class Lobby {
       // session (net.js mints a throwaway one for these frames), so they never need a room.
       case 'auth.register': return this.authRegister(session, msg);
       case 'auth.login': return this.authLogin(session, msg);
+      case 'auth.rename': return this.authRename(session, msg);
       case 'auth.logout': return this.authLogout(session);
       // 对局统计 mirror (extension §account, server/stats.js): a 游客's frames are no-ops — nothing is stored
       // without an account token, and the client only sends them while signed in.
       case 'stats.push': return this.statsPush(session, msg);
       case 'stats.pull': return this.statsPull(session);
       case 'stats.clear': return this.statsClear(session);
+      // settings + personal-plugin switches mirror (extension §account, shared/settingsSync.js): the same account
+      // token, no room involved. A 游客's frames are no-ops.
+      case 'settings.push': return this.settingsPush(session, msg);
+      case 'settings.pull': return this.settingsPull(session);
       default:
         if (typeof msg.t === 'string' && msg.t.startsWith('g.')) return this.routeGameNow(session, msg);
         return fail(ERR.BAD_MSG, `unhandled type ${String(msg.t).slice(0, 32)}`);
@@ -817,6 +822,10 @@ export class Lobby {
     // `welcome` sends these entries back instead of overwriting the account with this browser's copy.
     if (acct.loadout) session.loadout = acct.loadout;
     if (acct.ops) session.ops = acct.ops;
+    // 干员皮肤 (docs/SKINS.md): the account's saved choice is the baseline for this session. `null` = the account has
+    // never stored one (the browser's local choice / a guest's room.skins will seed it on the next send); `{}` = a real
+    // empty choice. Always assign, so another account's session copy can never leak into this account's next welcome.
+    session.skins = acct.skins ?? null;
   }
 
   /**
@@ -849,54 +858,90 @@ export class Lobby {
   }
 
   /**
-   * `auth.register { username, password }` → `auth.result { ok, token, username, loadout, ops }`.
+   * `auth.register { username, password, accountId? }` → `auth.result { ok, accountId, token, username, loadout, ops }`.
+   * `username` is the display name; the account ID is generated (or the recovery id this browser still remembers).
    * The returned `token` is a bearer for this account: the client stores it (public/js/net.js accountStore) and
    * passes it on every later `hello` as `account`. The session is renamed to the new username right away, and the
    * next hello re-runs the same resolution (accountHello) — the player is on the title screen, so the client
    * enters the game with that name as soon as the reply arrives.
    */
-  async authRegister(session, { username, password }) {
+  async authRegister(session, { username, password, accountId }) {
     if (!this.accounts) return fail(ERR.BAD_MSG, 'accounts disabled on this server');
-    const r = await this.accounts.register(username, password);
+    const r = await this.accounts.register(username, password, { accountId });
     if (!r.ok) {
-      // map store errors onto the small existing ERR vocabulary (BAD_MSG covers shape/policy; ALREADY = taken)
+      // map store errors onto the small existing ERR vocabulary (BAD_MSG covers shape/policy; ALREADY = id taken)
       return fail(r.error === 'TAKEN' ? ERR.ALREADY : ERR.BAD_MSG, r.detail);
     }
     session.accountToken = r.token;
     session.accountName = r.username;
-    session.name = r.username; // the account name is the in-game name (see accountHello)
+    session.name = r.username; // the username is the in-game name (see accountHello)
     // The new account claims this session now (not only at the hello that follows): a seat another identity was
-    // holding is left behind at once.
+    // holding is left behind at once. The registry map is bound by the following hello (accountHello) — binding it
+    // here would make a pre-hello login on another device resolve to its provisional session instead of the seat.
     this.dropForeignSeat(session, r.key);
     // immediately sync whatever the player already built in this browser into the new account
     if (session.loadout || session.ops) void this.accounts.saveLoadout(r.token, session.loadout, session.ops);
-    return { ok: true, authResult: { token: r.token, username: r.username, loadout: session.loadout || r.loadout, ops: session.ops || r.ops,
-      stats: r.stats, statsClearedAt: r.statsClearedAt } };
+    // a guest's skin choice is adopted by the new account, like the guest loadout / statistics (docs/SKINS.md); then
+    // the session starts from the account's empty copy and the post-welcome room.skins carries the client's choice.
+    if (session.skins) void this.accounts.saveSkins(r.token, session.skins);
+    session.skins = r.skins ?? null;
+    return { ok: true, authResult: { token: r.token, accountId: r.accountId, username: r.username, loadout: session.loadout || r.loadout, ops: session.ops || r.ops,
+      skins: r.skins, stats: r.stats, statsClearedAt: r.statsClearedAt, settings: r.settings, settingsUpdatedAt: r.settingsUpdatedAt } };
   }
 
-  /** `auth.login { username, password }` → `auth.result { ok, token, username, loadout, ops }`. */
-  async authLogin(session, { username, password }) {
+  /** `auth.login { accountId, password }` → `auth.result { ok, accountId, token, username, loadout, ops }`. */
+  async authLogin(session, { accountId, username, password }) {
     if (!this.accounts) return fail(ERR.BAD_MSG, 'accounts disabled on this server');
-    const r = await this.accounts.login(username, password);
+    // `username` is a legacy alias for the account ID (an existing player's old username IS its migrated id); it is
+    // never read as a display name here.
+    const r = await this.accounts.login(accountId ?? username, password);
     if (!r.ok) {
       // NOT_FOUND and BAD_PASSWORD both surface as BAD_MSG (no account enumeration), with a small detail
       return fail(ERR.BAD_MSG, r.detail);
     }
     session.accountToken = r.token;
     session.accountName = r.username;
-    session.name = r.username; // the account name is the in-game name (see accountHello)
+    session.name = r.username; // the username is the in-game name (see accountHello)
     // As in authRegister: the verified account claims the session here, so a seat another identity held is left
-    // behind immediately (accountHello re-checks it for the seat a `hello { token }` may have matched).
+    // behind immediately (accountHello re-checks it for the seat a `hello { token }` may have matched). The registry
+    // map is bound by the following hello, not here: a second device's pre-hello login must still find the seat.
     this.dropForeignSeat(session, r.key);
     // Pull the account's saved 干员调配 into the session (the room / match pick it up from session.loadout on
     // the next request, and the client's loadoutSync pushes a `room.loadout` right after welcome to overwrite
     // whatever it had locally).
     if (r.loadout) session.loadout = r.loadout;
     if (r.ops) session.ops = r.ops;
-    // The 对局统计 mirror travels in the reply as well (title.js applies it before entering; the welcome-driven
-    // stats sync pulls it too, for a session that resumed without a login).
-    return { ok: true, authResult: { token: r.token, username: r.username, loadout: r.loadout, ops: r.ops,
-      stats: r.stats, statsClearedAt: r.statsClearedAt } };
+    // 干员皮肤: `{}` is a real empty choice; null (never stored) starts the session empty and the client's post-welcome
+    // room.skins seeds the account with this browser's choice. Always assign, so a previous account's session copy
+    // cannot leak into this one.
+    session.skins = r.skins ?? null;
+    // The 对局统计 mirror, the 设置 document and the skin choice travel in the reply as well (title.js applies them
+    // before entering; the welcome-driven syncs pull them too, for a session that resumed without a login).
+    return { ok: true, authResult: { token: r.token, accountId: r.accountId, username: r.username, loadout: r.loadout, ops: r.ops,
+      skins: r.skins, stats: r.stats, statsClearedAt: r.statsClearedAt, settings: r.settings, settingsUpdatedAt: r.settingsUpdatedAt } };
+  }
+
+  /**
+   * `auth.rename { username }` → `auth.result { ok, accountId, token, username }`: change the display username at any
+   * time. The account ID and bearer never change. A seat in a lobby / a running match is updated and re-broadcast;
+   * other devices see the new name on their next `welcome` / room resync.
+   */
+  async authRename(session, { username }) {
+    if (!this.accounts || !session.accountToken) return fail(ERR.BAD_MSG, 'not signed in');
+    const r = await this.accounts.rename(session.accountToken, username);
+    if (!r.ok) return fail(ERR.BAD_MSG, r.detail);
+    session.accountName = r.username;
+    session.name = r.username;
+    const room = this.roomOf(session);
+    if (room) {
+      const seat = room.seatOf(session.playerId) || room.spectatorOf(session.playerId);
+      if (seat) seat.name = r.username;
+      // During a match the public player list is the match's copy (PlayerState.name). The proxy of a match host
+      // forwards renamePlayer to the worker, so a gameplay-plugin room is updated too.
+      if (typeof room.match?.renamePlayer === 'function') room.match.renamePlayer(session.playerId, r.username);
+      this.broadcastState(room);
+    }
+    return { ok: true, authResult: { token: session.accountToken, accountId: r.accountId, username: r.username } };
   }
 
   /**
@@ -951,6 +996,34 @@ export class Lobby {
     if (!this.accounts || !session.accountToken) return OK;
     void this.accounts.clearStats(session.accountToken);
     return OK;
+  }
+
+  // ---------------------------------------------------------------------------------------------------
+  // Settings + personal-plugin switches (extension §account) — shared/settingsSync.js
+  // ---------------------------------------------------------------------------------------------------
+
+  /**
+   * `settings.push {settings}` → `ok`: store this browser's 设置 + personal-plugin switches on the account. The
+   * document is the client's schema (shared/settingsSync.js); the server only validates its envelope and stores it
+   * whole. Last writer wins; a lost write is not worth a toast because the client pushes again after the next edit
+   * / welcome.
+   */
+  async settingsPush(session, { settings }) {
+    if (!this.accounts || !session.accountToken) return OK;
+    // awaited (unlike stats.push): the document is small and a following settings.pull must see this write
+    const saved = await this.accounts.saveSettings(session.accountToken, settings);
+    return saved ? OK : fail(ERR.INTERNAL, 'settings not stored');
+  }
+
+  /**
+   * `settings.pull` → `settings.sync {settings, updatedAt}`: the account's settings document back to the client,
+   * which applies it (it is authoritative on login / after every welcome). A 游客 gets the plain `ok`, which the
+   * client must not read as an empty account copy.
+   */
+  settingsPull(session) {
+    if (!this.accounts || !session.accountToken) return OK;
+    const acct = this.accounts.lookupToken(session.accountToken);
+    return { ok: true, settingsSync: { settings: acct?.settings || null, updatedAt: acct?.settingsUpdatedAt ?? null } };
   }
 
   // ---------------------------------------------------------------------------------------------------
@@ -1475,6 +1548,8 @@ export class Lobby {
     const kept = freezeSkins(skins, (id) => ids.has(id));
     if (!kept) return fail(ERR.BAD_MSG, 'bad skin selection');
     session.skins = kept;
+    // the account keeps the choice across devices (docs/SKINS.md); a guest's session is unaffected
+    if (session.accountToken) void this.accounts?.saveSkins(session.accountToken, kept);
     if (!room) return OK;
     const seat = room.seatOf(session.playerId);
     if (seat) seat.skins = kept;
@@ -1569,7 +1644,15 @@ export class Lobby {
    */
   welcomeInfo(session) {
     let info;
-    const account = session?.accountName ? { accountName: session.accountName } : null;
+    // `accountId` is the stable login id; `accountName` is the mutable in-game name. Both only once the token resolved.
+    const account = session?.accountName
+      ? {
+        accountName: session.accountName,
+        ...(session.accountKey ? { accountId: session.accountKey } : {}),
+        // 干员皮肤: the account's stored choice for this session (null = no copy; `{}` = a real empty choice)
+        ...(session.skins !== null && session.skins !== undefined ? { accountSkins: session.skins } : {}),
+      }
+      : null;
     if (!this.vanilla) info = { diyKitted: KITTED_CHARS, ...account };
     else {
       let n;

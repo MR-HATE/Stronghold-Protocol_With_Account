@@ -495,7 +495,9 @@ the first set, the load-order function (`shared/plugins/order.js`) with the cata
 (`public/js/assets.js`) with the first match, as in 0.2.6.
 
 **A player's plugins.** 设置 → 外观插件 lists the server's cosmetic plugins of scope `personal`, each with a switch, kept in
-this browser only (`localStorage` `sp.pref.cosmetics`), never sent, never part of a battle and seen by nobody else. The
+this browser (`localStorage` `sp.pref.cosmetics`); when the player is signed in, the id list is also mirrored to the
+account as part of the settings document (`settings.push` / `settings.pull`, `ui/settingsSync.js`) — never to a room,
+never part of a battle and seen by nobody else. The
 switched-on ones form a set exactly like a room's (`shared/plugins/order.js`, over what the catalogue lists of each:
 `requires`, `optional`, `conflicts`, `loadAfter`, `loadBefore`, `priority` — `public/js/content.js` personalSet): a plugin
 another one needs is switched on too (「自动」, its switch locked), a switch that would make a conflict or needs a plugin
@@ -920,6 +922,11 @@ normalised by the manifest's declared settings (§3) and are part of `cs`. Refus
 A change of the content set (or of the mode) un-readies the other players, like a difficulty change. Switching
 everything off brings back the vanilla shape of `room.state.content` exactly.
 
+**Fork addition — a host's remembered choice.** A successful switch (ids + manifest `settings`) is remembered in that
+host's account settings document (`plugins.room`, `public/js/ui/pluginConfig.js`) and applied through the same
+`room.setPlugins` to a newly created room that host runs with no plugins yet. It is only a preference: the normal
+checks above apply, a refusal changes nothing, and the room's live set / `cs` / `vs` are never edited by the sync.
+
 **The room's state.** With gameplay plugins `room.state.content` is `{ cs, vanilla: false, plugins: [{ id, version,
 class, hash, auto? }], warnings, bytes, dataBytes, vs?, modes?, modeId?, kittedExtra? }`: `dataBytes` is what a member
 downloads beyond the vanilla files, `modes` the modes its plugins add (`{ id, name, roomMode, difficulty }`), `modeId`
@@ -1337,7 +1344,8 @@ is `unitId`). The private subset drops loadout, ops, diy, effects, nextEnemies, 
 tokens. The exact allowlists are `subsetPublic` and `subsetPrivate`. Storing a snapshot does not trip
 `PLUGIN_INTENT` just because the host had labelled it `b.snap`.
 
-**Switches.** 设置 → 「界面插件」 is `localStorage` (`sp.pref.ui-plugins`). It does not affect other players. The host
+**Switches.** 设置 → 「界面插件」 is `localStorage` (`sp.pref.ui-plugins`), mirrored to the account when signed in
+(`ui/settingsSync.js`). It does not affect other players. The host
 may 「推荐」 (`sp.pref.ui-recommend`); the room shows 「房主推荐」 and each player still decides. [ASSUMED] the
 recommendation is this browser's until a later phase copies it onto the existing `room.state` — no new protocol
 message. The host may toggle it during a match because it changes no match.
@@ -1483,7 +1491,8 @@ schema, findings in plain words and hot reload. The design is DESIGN §32.9; the
   forced install and `_moved/`; it grows until the owner empties it). A plugin **in use** stays where it is: one an open
   room's plugin set lists — the plugins its host switched on and the ones switched on for them (「自动」), which a running
   match plays too (`server/lobby.js` `room.content.plugins`: the place that knows it). A player's personal cosmetic or
-  interface plugins live in that player's browser alone (localStorage), so the server sees no use of them: a removed one stops
+  interface plugins live in that player's browser (localStorage; the id switches are mirrored to that player's account,
+  not to the room), so the server sees no room use of them: a removed one stops
   applying there (the catalogue no longer offers it) and applies again once restored. Nor do `plugins/config.json`'s
   `default` list or a trial of the bench count: a room created afterwards logs that a default plugin cannot be applied,
   as for any default that is missing, and a trial reading the folder fails like one whose folder changed [ASSUMED]. The

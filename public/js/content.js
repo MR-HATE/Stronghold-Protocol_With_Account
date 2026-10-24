@@ -1,8 +1,9 @@
 // content.js — what this page shows beyond the installation's own art (DESIGN §32 P1a, docs/PLUGINS.md §9): the room's
 // visual set — the cosmetic plugins its host switched on, named by room.state.content.vs — and the player's personal
-// cosmetic plugins (设置 → 外观插件, kept in this browser only: `sp.pref.cosmetics`), laid over the art manifest every
-// screen reads (cosmetics.js `cosmetics`; data.js shows `assets` through them, so `data.get('assets')` is the art the room
-// draws). Nothing here changes a battle: a room's `cs` stays the vanilla one, and nobody else sees a personal plugin.
+// cosmetic plugins (设置 → 外观插件, kept in this browser as `sp.pref.cosmetics`; signed in, the id list follows the
+// account through the settings sync, ui/settingsSync.js), laid over the art manifest every screen reads (cosmetics.js
+// `cosmetics`; data.js shows `assets` through them, so `data.get('assets')` is the art the room draws). Nothing here
+// changes a battle: a room's `cs` stays the vanilla one, and nobody else sees a personal plugin.
 //
 //   * The room: whenever room.state.content.vs changes, /vs/<vs16>/overlay.json is fetched as text, parsed and checked
 //     (shared/plugins/visual.js checkVisualDoc — its composition hashes to the `vs` the room named) and becomes the room
@@ -201,7 +202,8 @@ export function personalSet(ids, entries) {
 }
 
 /**
- * Switch a personal cosmetic plugin on or off (this browser only). Switching one on that would conflict with the others
+ * Switch a personal cosmetic plugin on or off (this browser; signed in, the id list is mirrored to the account by
+ * ui/settingsSync.js, still only for this player). Switching one on that would conflict with the others
  * or needs a plugin this server lacks is refused (the catalogue loaded: the room's PLUGIN_CONFLICT / PLUGIN_DEPENDENCY);
  * off always works (a plugin another one needs stays in the set, 「自动」).
  * @param {string} id @param {boolean} on

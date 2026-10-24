@@ -24,6 +24,7 @@ import { AssetDownloadButton } from '../ui/assetDownload.js';
 import { AssetImportButton } from '../ui/assetImport.js';
 import { useEffect, useMemo, useState } from '../../vendor/hooks.module.js';
 import { NAME_MAX_LEN, APP_VERSION, DEV_BUILD } from '../../../shared/constants.js';
+import { ACCOUNT_NAME_MAX, sanitizeAccountName } from '../../../shared/account.js';
 import { html, Button, Icon, MicroLabel, TextField, PingPill, Modal } from '../ui/components.js';
 import { GuideButton } from '../ui/guide.js';
 import { openStats } from './stats.js';
@@ -40,9 +41,12 @@ import { SettingsModal } from '../ui/settings.js';
 import { setEntries, setOpsMap, flushLoadout, pauseLoadoutSync, resumeLoadoutSync } from '../ui/loadoutSync.js';
 import { parseStored, parseStoredOps } from '../ui/loadoutModel.js';
 import { applyAccountStats } from '../ui/stats.js';
+import { applyAccountSettings } from '../ui/settingsSync.js';
+import { setSkins, parseStoredSkins } from '../ui/skins.js';
 import { installedCount } from '../content.js';
 import { NoticesButton } from '../ui/notices.js';
 import { sanitizeName, isValidName } from '../ui/playerName.js';
+import { copyText } from '../ui/clipboard.js';
 
 export { stripLoneSurrogates, sanitizeName, isValidName } from '../ui/playerName.js';
 
@@ -77,13 +81,14 @@ export function setLoginNudgeOff(on) { savePref(NUDGE_PREF, !!on); }
 /**
  * Enter the game as the logged-in account: its username is the in-game name (server/lobby.js accountHello
  * re-confirms it and `welcome` carries the server's own spelling back, so the name here is only the title
- * screen's local copy — an account username may be longer than a callsign and is never written back into
- * `accountStore`).
+ * screen's local copy — an account username may be longer than a callsign / any script, and it is never a
+ * credential: the account ID is).
  * @returns {boolean} false when there is no usable account
  */
 export function enterAsAccount() {
   const acct = accountStore.read();
-  const name = sanitizeName(acct?.username || '');
+  // account usernames are display names (up to 24 code points), not the 12-code-unit callsign
+  const name = sanitizeAccountName(acct?.username || '');
   if (!name) return false;
   setGuest(false); // an account is being used again: the 游客 marker is no longer true
   return enterSession(name);
@@ -273,10 +278,16 @@ export function TitleScreen() {
   // popping the form up again, so an already-logged-in player is never asked to sign in a second time.
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
-  const [authUser, setAuthUser] = useState(accountStore.lastUsername());
+  const [authId, setAuthId] = useState(() => accountStore.lastAccountId());
+  const [authUser, setAuthUser] = useState(() => accountStore.lastUsername());
   const [authPass, setAuthPass] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
   const [authShow, setAuthShow] = useState(false); // 显示密码 toggle of the account modal
+  /** When re-registering after the account store was wiped: reuse the ID this browser still knows, so the seat /
+   *  local 干员调配 / 统计数据 stay keyed by it. A normal registration leaves it null and the server generates one. */
+  const [recoveryId, setRecoveryId] = useState(null);
+  /** The generated account ID to show once after a registration. */
+  const [created, setCreated] = useState(null); // { accountId, username } | null
   const acct = accountStore.read();
 
   // ---- 游客 login nudge (see isLoginNudgeOff): 开始 as a guest offers the account first ----
@@ -293,6 +304,8 @@ export function TitleScreen() {
   const recoverAccount = () => {
     dismissExpired();
     setAuthUser(accountStore.lastUsername()); // who this browser was playing as, ready to register again
+    setAuthId(accountStore.lastAccountId()); // and the stable ID that owns the local data
+    setRecoveryId(accountStore.lastAccountId() || null);
     setAuthMode('register');
     setAuthOpen(true);
   };
@@ -300,30 +313,49 @@ export function TitleScreen() {
   const startLogin = () => {
     setNudgeOpen(false);
     setAuthMode('login');
-    // Carry the typed callsign over when it is already a legal username — it is the name they want to be called by.
-    const typed = sanitizeName(name);
-    if (/^[a-zA-Z0-9_\-.]{2,24}$/.test(typed)) setAuthUser(typed);
+    setRecoveryId(null);
+    setAuthId(accountStore.lastAccountId() || accountStore.lastUsername());
     setAuthOpen(true);
+  };
+  const switchAuthMode = (mode) => {
+    setRecoveryId(null);
+    setAuthMode(mode);
+    if (mode === 'login') {
+      setAuthId(accountStore.lastAccountId() || accountStore.lastUsername());
+    } else if (!authUser) {
+      // The typed callsign is a good first guess for the display name; any script is now allowed.
+      const typed = sanitizeAccountName(name);
+      if (typed) setAuthUser(typed);
+    }
   };
 
   const submitAuth = async (e) => {
     e?.preventDefault?.();
     if (authBusy) return;
-    const typed = authUser.trim();
-    if (!/^[a-zA-Z0-9_\-.]{2,24}$/.test(typed)) { toast(t('账号需为 2-24 位字母数字 _ - .'), 'warn'); return; }
-    // The account already on this device is signed in: say so and just close the form (no password, no re-login).
-    if (typed.toLowerCase() === (acct?.username || '').toLowerCase()) {
-      setGuest(false);
-      setAuthOpen(false);
-      setAuthPass('');
-      toast(t('该账号已登录，直接进入即可'), 'info');
+    const login = authMode === 'login';
+    const id = authId.trim().toLowerCase();
+    const username = sanitizeAccountName(authUser);
+    if (login) {
+      if (!id) { toast(t('请输入账号 ID'), 'warn'); return; }
+      // The account already on this device is signed in: say so and just close the form (no password, no re-login).
+      if (acct?.accountId && id === acct.accountId) {
+        setGuest(false);
+        setAuthOpen(false);
+        setAuthPass('');
+        toast(t('该账号已登录，直接进入即可'), 'info');
+        return;
+      }
+    } else if (!username) {
+      toast(t('请输入博士代号'), 'warn');
       return;
     }
     if (authPass.length < 4) { toast(t('密码至少 4 位'), 'warn'); return; }
     setAuthBusy(true);
     try {
-      const r = await net.request(authMode === 'login' ? 'auth.login' : 'auth.register', { username: typed, password: authPass });
-      accountStore.write({ token: r.token, username: r.username });
+      const r = login
+        ? await net.request('auth.login', { accountId: id, password: authPass })
+        : await net.request('auth.register', { username, password: authPass, ...(recoveryId ? { accountId: recoveryId } : {}) });
+      accountStore.write({ token: r.token, accountId: r.accountId, username: r.username });
       // The account's saved 干员调配 is authoritative: put it into the local store BEFORE entering, so the sync
       // that runs on welcome sends those entries back instead of overwriting the account with whatever this
       // browser happened to have (a fresh device sends {} and would otherwise wipe it).
@@ -333,15 +365,27 @@ export function TitleScreen() {
       // 对局统计: the account's mirror joins this browser's history before entering — a foreign history (another
       // account's, see ui/stats.js applyAccountStats) is replaced instead of adopted, and a 游客's own records are
       // adopted by the account (the same rule the 干员调配 follows). The welcome-driven sync pushes the union back.
-      applyAccountStats(r.stats, { key: String(r.username || '').toLowerCase(), clearedAt: r.statsClearedAt });
-      toast(authMode === 'login'
-        ? t('已登录 {name}，以该账号进入游戏', { name: r.username })
-        : t('账号 {name} 已创建，正在进入游戏', { name: r.username }), 'success');
+      applyAccountStats(r.stats, { key: r.accountId || String(r.username || '').toLowerCase(), clearedAt: r.statsClearedAt });
+      // 设置 + the personal plugin switches: the account's copy is authoritative before entering, like the 干员调配.
+      // An account with no copy yet keeps this browser's settings; the welcome-driven sync seeds it after entering.
+      if (r.settings) applyAccountSettings(r.settings);
+      // 干员皮肤 (docs/SKINS.md): the account's saved appearance choices are authoritative before entering; null keeps
+      // this browser's/local (guest) copy, `{}` is a real empty choice. The room.skins sync then sends them to the room.
+      if (r.skins !== null && r.skins !== undefined) setSkins(parseStoredSkins(r.skins));
       setGuest(false); // an account is in use again
       setAuthOpen(false);
       setAuthPass('');
-      // No callsign to fill in any more: the username IS the in-game name (enforced server-side too).
-      enterAsAccount();
+      setRecoveryId(null);
+      setAuthId(r.accountId || id);
+      setAuthUser(r.username || username);
+      if (login) {
+        toast(t('已登录 {name}，以该账号进入游戏', { name: r.username }), 'success');
+        // No callsign to fill in any more: the username IS the in-game name (enforced server-side too).
+        enterAsAccount();
+      } else {
+        // Show the generated account ID once: it is the login credential, and the next device needs it.
+        setCreated({ accountId: r.accountId, username: r.username });
+      }
     } catch (err) {
       toast(err?.detail || err?.msg || err?.code || t('操作失败'), 'error');
       console.warn('[auth] failed', err);
@@ -360,9 +404,9 @@ export function TitleScreen() {
     }
   };
 
-  const acctName = sanitizeName(acct?.username || '');
+  const acctName = sanitizeAccountName(acct?.username || '');
   // the account this page is already signed into: its form needs no password (submitAuth answers with a toast)
-  const sameAccount = !!acct && authUser.trim().toLowerCase() === acct.username.toLowerCase();
+  const sameAccount = !!acct?.accountId && !!authId && authId.trim().toLowerCase() === acct.accountId;
   const valid = !!acctName || isValidName(name);
   const start = () => {
     // Logged in → the account name, no callsign step; logged out → the typed callsign.
@@ -454,10 +498,15 @@ export function TitleScreen() {
         <div class="title-account">
           ${acct
             ? html`<span class="title-account__me">${t('已登录')} <b>${acct.username}</b> · ${t('干员调配已同步')}</span>
-                   <button type="button" class="title-account__link" onClick=${() => setAuthOpen(true)}>${t('切换账号')}</button>
+                   <span class="title-account__id">${t('账号')} ID <b class="num">${acct.accountId || '—'}</b>
+                     ${acct.accountId ? html`<button type="button" class="title-account__link" title=${t('复制')} aria-label=${t('复制')}
+                       onClick=${async () => { toast(await copyText(acct.accountId) ? t('已复制到剪贴板') : t('复制失败，请手动复制'), 'info'); }}>${t('复制')}</button>` : null}
+                   </span>
+                   <button type="button" class="title-account__link" onClick=${() => setSettingsOpen(true)}>${t('修改用户名')}</button>
+                   <button type="button" class="title-account__link" onClick=${startLogin}>${t('切换账号')}</button>
                    <button type="button" class="title-account__link" onClick=${logout}>${t('以游客身份继续')}</button>`
             : html`<span class="title-account__me">${t('游客：干员调配只存在这台设备上')}</span>
-                   <button type="button" class="title-account__link" onClick=${() => setAuthOpen(true)}>${t('登录 / 注册 · 同步干员调配')}</button>`}
+                   <button type="button" class="title-account__link" onClick=${startLogin}>${t('登录 / 注册 · 同步干员调配')}</button>`}
         </div>
       </div>
       <div class="title-assets">
@@ -470,10 +519,16 @@ export function TitleScreen() {
       <form class="auth-modal__box" onSubmit=${submitAuth}>
         <${MicroLabel} tone="mint">ACCOUNT<//>
         <h3>${authMode === 'login' ? t('登录账号') : t('注册账号')}</h3>
-        <p class="t-lo">${t('登录后你的账号名就是游戏内代号，干员调配与统计数据也会绑定账号，换设备或刷新都不会丢。')}</p>
-        <${TextField} label=${t('账号')} icon="user" value=${authUser} placeholder=${t('字母数字 _ - .')} maxLength=${24}
-          autoFocus=${!touchUi} onInput=${(v) => setAuthUser(v)} />
-        ${sameAccount
+        <p class="t-lo">${authMode === 'login'
+          ? t('登录使用账号 ID，不是用户名。')
+          : t('用户名就是游戏内代号，可以随时修改；登录凭据是注册后生成的账号 ID。')}</p>
+        ${authMode === 'login'
+          ? html`<${TextField} label=${`${t('账号')} ID`} icon="user" value=${authId} placeholder="sp-…" maxLength=${64}
+              autoFocus=${!touchUi} onInput=${(v) => setAuthId(v)} />`
+          : html`<${TextField} label=${t('博士代号')} icon="user" value=${authUser} maxLength=${ACCOUNT_NAME_MAX}
+              placeholder=${t('输入你的代号（最多 {NAME_MAX_LEN} 字）', { NAME_MAX_LEN: ACCOUNT_NAME_MAX })}
+              autoFocus=${!touchUi} onInput=${(v) => setAuthUser(v)} />`}
+        ${authMode === 'login' && sameAccount
           ? html`<p class="t-lo">${t('该账号已登录，直接进入即可')}</p>`
           : html`<div class="auth-pass">
               <${TextField} label=${t('密码')} icon="lock" value=${authPass} type=${authShow ? 'text' : 'password'}
@@ -483,7 +538,7 @@ export function TitleScreen() {
             </div>`}
         <${Button} type="submit" variant="primary" block=${true} disabled=${authBusy} iconRight="login">${authBusy ? t('处理中…') : (authMode === 'login' ? t('登录') : t('注册'))}<//>
         <div class="auth-modal__row">
-          <button type="button" class="auth-modal__link" onClick=${() => setAuthMode(authMode === 'login' ? 'register' : 'login')}>
+          <button type="button" class="auth-modal__link" onClick=${() => switchAuthMode(authMode === 'login' ? 'register' : 'login')}>
             ${authMode === 'login' ? t('没有账号？点击注册') : t('已有账号？去登录')}
           </button>
           <button type="button" class="auth-modal__link" onClick=${() => setAuthOpen(false)}>${t('稍后再说')}</button>
@@ -491,13 +546,27 @@ export function TitleScreen() {
       </form>
     </div>` : null}
 
+    ${created ? html`<${Modal} open=${true} micro="ACCOUNT" title=${t('账号已创建')}
+        onClose=${() => setCreated(null)}
+        actions=${html`<${Button} variant="primary" icon="login" block=${true} data-autofocus=${true}
+          onClick=${() => { setCreated(null); enterAsAccount(); }}>${t('进入游戏')}<//>`}>
+      <div class="title-nudge">
+        <p>${t('请记下这个账号 ID，登录时需要它。')}</p>
+        <p class="title-created__id"><b class="num">${created.accountId}</b>
+          <button type="button" class="title-account__link" onClick=${async () => {
+            toast(await copyText(created.accountId) ? t('已复制到剪贴板') : t('复制失败，请手动复制'), 'info');
+          }}>${t('复制')}</button></p>
+        <p class="t-lo">${t('用户名')}：${created.username}</p>
+      </div>
+    <//>` : null}
+
     ${accountExpired ? html`<${Modal} open=${true} micro="ACCOUNT" title=${t('账号已失效')}
         onClose=${dismissExpired}
         actions=${html`<${Button} variant="primary" icon="login" block=${true} data-autofocus=${true} onClick=${recoverAccount}>${t('重新登录 / 注册')}<//>
           <${Button} variant="secondary" block=${true} onClick=${continueAsGuest}>${t('以游客身份继续')}<//>`}>
       <div class="title-nudge">
         <p>${t('服务器上已经没有这个账号（账号数据被清空或换了服务器）。请重新登录或注册。')}</p>
-        <p class="t-lo">${t('本机的干员调配与统计数据还在：用同一个账号名重新注册就能传回账号。')}</p>
+        <p class="t-lo">${t('本机的干员调配与统计数据还在：用同一个账号 ID 重新注册就能传回账号。')}</p>
       </div>
     <//>` : null}
 

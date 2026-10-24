@@ -21,7 +21,7 @@
 
 ### 1.1 安装与首次启动
 
-1. 安装 Node.js 22 LTS 和 Git（在 PowerShell 或「终端」里；用下面的整合包时不需要 Git）：
+1. 安装 Node.js 22.13+ LTS 和 Git（在 PowerShell 或「终端」里；用下面的整合包时不需要 Git）：
    ```powershell
    winget install OpenJS.NodeJS.LTS
    winget install Git.Git
@@ -193,7 +193,9 @@ cloudflared tunnel --url http://localhost:3000
 2. 路由器「虚拟服务器 / 端口转发」：外部端口 3000（或任意端口）→ 内部 `主机IP:3000`，TCP。
 3. 朋友访问 `http://<你的公网 IP>:外部端口`。
 
-注意：账号是可选的，只用来记住身份（账号名即游戏内代号）和干员调配，存在 `accounts.json`（默认在开服电脑的用户目录，可用环境变量 `ACCOUNTS_DIR` 改到别处；**别放进仓库目录**，否则更新 / 重新解压会连带清掉）。它**不是访问控制**，知道地址的人都能进来。服务器对来自互联网的连接有按网络的数量限制（每个网络最多 64 个连接，房间 / 对局数量也有上限），但仍建议不玩时关掉转发，或优先用 Tailscale。**Docker 部署尤其注意**：镜像里这个文件在容器的可写层（`USER node` ⇒ `~node/data/accounts.json`），`docker rm` + 重新 `docker run` 就等于清空账号——重建容器时必须挂数据卷（`-e ACCOUNTS_DIR=/data -v <宿主机目录>:/data`，并把目录 `chown 1000:1000`）。真丢了也不会把人挡在门外，但也不会糊弄过去：玩家的浏览器会弹「账号已失效」并要求重新登录或注册（账号名仍预填在登录框里，也可以自己选「以游客身份继续」），用同一个用户名重新注册就能把本机的干员调配和统计数据再传上去（见 [design/network.md §8.1](design/network.md)）。
+注意：账号是可选的，只用来记住身份、干员调配、对局统计和设置——**登录用服务器生成的账号 ID，用户名只是游戏内代号（随时可改）**；存在 SQLite 数据库 `accounts.db`（默认在开服电脑的用户目录，可用环境变量 `ACCOUNTS_DIR` 改到别处；**别放进仓库目录**，否则更新 / 重新解压会连带清掉）。它**不是访问控制**，知道地址的人都能进来。服务器对来自互联网的连接有按网络的数量限制（每个网络最多 64 个连接，房间 / 对局数量也有上限），但仍建议不玩时关掉转发，或优先用 Tailscale。**Docker 部署尤其注意**：镜像里这个库（以及 `-wal` / `-shm`）在容器的可写层（`USER node` ⇒ `~node/data/accounts.db`），`docker rm` + 重新 `docker run` 就等于清空账号——重建容器时必须挂数据卷（`-e ACCOUNTS_DIR=/data -v <宿主机目录>:/data`，并把目录 `chown 1000:1000`）。旧的 `accounts.json` 直接放进同一个目录即可，第一次启动会自动导入并保留为 `accounts.json.imported`。真丢了也不会把人挡在门外，但也不会糊弄过去：玩家的浏览器会弹「账号已失效」并要求重新登录或注册（账号 ID 与用户名仍预填在登录框里，也可以自己选「以游客身份继续」），用同一个账号 ID 重新注册就能把本机的干员调配、统计数据和设置再传上去（见 [design/network.md §8.1](design/network.md)）。
+
+**备份**：停服后把 `accounts.db`、`accounts.db-wal`、`accounts.db-shm` 三个文件一起拷走；运行中请用 `sqlite3 accounts.db ".backup 'accounts-backup.db'"`（或 `VACUUM INTO`），不要只拷主文件——最新的写入在 WAL 里。`ACCOUNTS_DIR` 不要放在 NFS / SMB 等网络盘上（WAL 的共享内存与锁不可靠）。
 
 ### 2.4 反向代理与 HTTPS（有域名时）
 

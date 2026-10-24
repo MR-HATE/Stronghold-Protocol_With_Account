@@ -52,6 +52,22 @@ export class MatchMessaging {
   }
 
   markPublic() { this._pubDirty = true; }
+
+  /**
+   * The account username changed (auth.rename): update this match's own copy of the player's name and publish
+   * m.public at once, so the room's other players see it in `players[].name`. Bots / an unknown player / an
+   * unchanged name change nothing. The match-host proxy forwards this to its worker.
+   * @param {string} playerId @param {string} name
+   * @returns {boolean} whether anything changed
+   */
+  renamePlayer(playerId, name) {
+    const ps = this.players.get(playerId);
+    if (!ps || ps.isBot || ps.left || typeof name !== 'string' || !name || ps.name === name) return false;
+    ps.name = name;
+    this.markPublic();
+    this.flush(true);
+    return true;
+  }
   /**
    * A player's state changed: its m.private and (throttled, deduplicated) m.public (level, board, bonds…) — in a boss
    * round's prep also its pair partner's m.private, which shows this board on its other half (bossMate, item 51).

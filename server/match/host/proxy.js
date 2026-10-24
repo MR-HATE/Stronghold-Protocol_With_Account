@@ -7,7 +7,7 @@
 //                                            the host queues the messages; the match exists for the lobby at once)
 //   handle / setLoadout / requestSetupReroll / cancelSetupReroll → Promise of the match's answer ({ ok } | { error, detail })
 //                                            — the lobby answers the request when it settles (server/net.js)
-//   onDisconnect / onReconnect / onLeave / addSpectator / removeSpectator → posted, no answer
+//   onDisconnect / onReconnect / onLeave / addSpectator / removeSpectator / renamePlayer → posted, no answer
 //   dispose()                                posted; nothing of this match reaches the lobby afterwards
 //   diag()                                   → Promise of the match's diagnostics (verifyStats, errors, fields — tests,
 //                                            /healthz never)
@@ -122,6 +122,8 @@ export class MatchProxy {
   setLoadout(playerId, loadout, ops) { return this._request('setLoadout', [playerId, loadout, ops]); }
   requestSetupReroll(playerId, revision) { return this._request('requestSetupReroll', [playerId, revision]); }
   cancelSetupReroll(playerId, voteId) { return this._request('cancelSetupReroll', [playerId, voteId]); }
+  /** The account username changed (auth.rename): the hosted Match updates its own copy and republishes m.public. */
+  renamePlayer(playerId, name) { this._notify('renamePlayer', [playerId, name]); }
   onDisconnect(playerId) { this._notify('onDisconnect', [playerId]); }
   onReconnect(playerId) { this._notify('onReconnect', [playerId]); }
   onLeave(playerId) { this._notify('onLeave', [playerId]); }

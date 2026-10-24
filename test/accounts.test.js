@@ -57,6 +57,9 @@ describe('accounts: the account name is the in-game name', () => {
   let tmp;
   let pool;
   let store;
+  /** Stores opened inside a test (the same DB, as a second process would): always closed, or Windows keeps tmp locked. */
+  const extras = [];
+  const extraStore = () => { const s = new AccountStore({ dir: tmp, log: noopLog }); extras.push(s); return s; };
 
   before(async () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-accounts-'));
@@ -72,12 +75,15 @@ describe('accounts: the account name is the in-game name', () => {
   afterEach(async () => { await pool.closeAll(); });
   after(async () => {
     await srv?.close();
+    for (const s of extras) s.close();
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
-  /** Register / log in through a pre-hello socket, like the title screen does. */
-  async function auth(c, t, username, password = 'hunter2') {
-    const r = await c.request({ t, username, password }, 10_000);
+  /** Register / log in through a pre-hello socket, like the title screen does. `name` is a display name for
+   * auth.register and an ACCOUNT ID for auth.login. */
+  async function auth(c, t, name, password = 'hunter2') {
+    const fields = t === 'auth.login' ? { accountId: name, password } : { username: name, password };
+    const r = await c.request({ t, ...fields }, 10_000);
     assert.equal(r.t, 'auth.result', JSON.stringify(r));
     return r;
   }
@@ -87,13 +93,15 @@ describe('accounts: the account name is the in-game name', () => {
     const r = await auth(c, 'auth.register', username, password);
     assert.equal(r.username, username);
     assert.equal(typeof r.token, 'string');
-    return { client: c, token: r.token };
+    assert.equal(typeof r.accountId, 'string');
+    return { client: c, token: r.token, accountId: r.accountId };
   }
 
   test('auth.register before hello: the session is created and named after the account', async () => {
     const c = await pool.connect();
     const r = await auth(c, 'auth.register', 'Anna', 'hunter2');
     assert.equal(r.username, 'Anna');
+    assert.match(r.accountId, /^sp-[0-9a-f]{12}$/);
     assert.equal(r.loadout, null);
 
     // pre-hello auth runs on a throwaway session; this hello renames it to the account.
@@ -108,7 +116,7 @@ describe('accounts: the account name is the in-game name', () => {
   });
 
   test('an account username may be longer than the callsign limit', async () => {
-    const username = 'long_name_24_chars_okay'; // 23 chars, USERNAME_RE allows up to 24
+    const username = 'long_name_24_chars_okay'; // 23 chars, ACCOUNT_NAME_MAX allows up to 24 code points
     assert.equal(username.length, 23);
     const c = await pool.connect();
     const r = await auth(c, 'auth.register', username, 'hunter2');
@@ -156,22 +164,27 @@ describe('accounts: the account name is the in-game name', () => {
   });
 
   test('auth.login resolves the account name, pre-hello included', async () => {
-    const { client: first, token } = await register('Carol', 'pw1234');
+    const { client: first, token, accountId } = await register('Carol', 'pw1234');
     assert.equal(token.length, 64);
 
-    const bad = await first.request({ t: 'auth.login', username: 'Carol', password: 'wrong' });
+    const bad = await first.request({ t: 'auth.login', accountId, password: 'wrong' });
     assert.equal(bad.t, 'error');
     assert.equal(bad.code, ERR.BAD_MSG);
 
-    const missing = await first.request({ t: 'auth.login', username: 'Nobody', password: 'pw1234' });
+    const missing = await first.request({ t: 'auth.login', accountId: 'sp-000000000000', password: 'pw1234' });
     assert.equal(missing.t, 'error');
     assert.equal(missing.code, ERR.BAD_MSG, 'no account enumeration');
 
-    const taken = await first.request({ t: 'auth.register', username: 'Carol', password: 'pw1234' });
+    // The username is not a credential and need not be unique: a second Carol is a second account. A recovery
+    // registration that asks for an ID already in use is the conflict (ALREADY).
+    const sameName = await first.request({ t: 'auth.register', username: 'Carol', password: 'pw1234' });
+    assert.equal(sameName.t, 'auth.result', JSON.stringify(sameName));
+    assert.notEqual(sameName.accountId, accountId);
+    const taken = await first.request({ t: 'auth.register', username: 'Carol3', password: 'pw1234', accountId });
     assert.equal(taken.t, 'error');
     assert.equal(taken.code, ERR.ALREADY);
 
-    const ok = await auth(first, 'auth.login', 'carol', 'pw1234');
+    const ok = await auth(first, 'auth.login', accountId, 'pw1234');
     assert.equal(ok.username, 'Carol', 'the stored spelling, not what was typed');
     assert.equal(ok.token, token, 'one stable bearer per account: a second device gets the same token');
 
@@ -223,7 +236,7 @@ describe('accounts: the account name is the in-game name', () => {
   });
 
   test('room.loadout is saved to the account and comes back on the next login', async () => {
-    const { client: first, token } = await register('Hana', 'pw1234');
+    const { client: first, token, accountId } = await register('Hana', 'pw1234');
     await first.hello(undefined, null, { account: token });
     await first.request({ t: 'room.create', mode: 'solo', difficulty: 'NORMAL' });
     await first.waitFor('room.state');
@@ -233,33 +246,33 @@ describe('accounts: the account name is the in-game name', () => {
 
     // a fresh device logs in: the account's loadout arrives in the login reply and in the welcome-driven session
     const other = await pool.connect();
-    const login = await auth(other, 'auth.login', 'Hana', 'pw1234');
+    const login = await auth(other, 'auth.login', accountId, 'pw1234');
     assert.ok(login.loadout, 'auth.result carries the saved loadout');
     assert.deepEqual(login.loadout[CHESS], { skill: 0, module: 'uniequip_002_inside' }, 'normalised by checkLoadout');
     const w2 = await other.hello(undefined, null, { account: login.token });
     assert.equal(w2.name, 'Hana');
 
     // and the store itself kept it
-    const fresh = new AccountStore({ dir: tmp, log: noopLog });
+    const fresh = extraStore();
     const acct = await fresh.resolveToken(login.token);
     assert.deepEqual(acct.loadout[CHESS], { skill: 0, module: 'uniequip_002_inside' });
   });
 
-  test('the store survives a reload of accounts.json', async () => {
+  test('the store survives a reopen of accounts.db', async () => {
     const { token } = await register('Frank', 'pw1234');
-    const reopened = new AccountStore({ dir: tmp, log: noopLog });
+    const reopened = extraStore();
     const acct = await reopened.resolveToken(token);
     assert.equal(acct.username, 'Frank');
     assert.equal(acct.loadout, null);
 
     await reopened.saveLoadout(token, { [CHESS]: { skill: 0, module: 'uniequip_002_inside' } });
-    const again = new AccountStore({ dir: tmp, log: noopLog });
+    const again = extraStore();
     const withLoadout = await again.resolveToken(token);
     assert.deepEqual(withLoadout.loadout, { [CHESS]: { skill: 0, module: 'uniequip_002_inside' } });
   });
 
   test('auth.logout detaches the session: a 游客 reset never reaches the account', async () => {
-    const { client: first, token } = await register('Ida', 'pw1234');
+    const { client: first, token, accountId } = await register('Ida', 'pw1234');
     await first.hello(undefined, null, { account: token });
     await first.request({ t: 'room.create', mode: 'solo', difficulty: 'NORMAL' });
     await first.waitFor('room.state');
@@ -273,7 +286,7 @@ describe('accounts: the account name is the in-game name', () => {
 
     // the account still holds the loadout it had, and logging in again brings it back
     const fresh = await pool.connect();
-    const login = await auth(fresh, 'auth.login', 'Ida', 'pw1234');
+    const login = await auth(fresh, 'auth.login', accountId, 'pw1234');
     assert.ok(login.loadout, 'the account kept its loadout through the 游客 round trip');
     assert.deepEqual(login.loadout[CHESS], { skill: 0, module: 'uniequip_002_inside' });
     const w = await fresh.hello(undefined, null, { account: login.token });
@@ -282,7 +295,7 @@ describe('accounts: the account name is the in-game name', () => {
   });
 
   test('a login on a second device restores the seat and the running match', async () => {
-    const { token } = await register('Iris', 'pw1234');
+    const { token, accountId } = await register('Iris', 'pw1234');
 
     // the first device: the account opens the session, creates a solo run and starts its match
     const deviceA = await pool.connect();
@@ -296,7 +309,7 @@ describe('accounts: the account name is the in-game name', () => {
     // the second device signs in with the PASSWORD (a real login, not a copied token): the account resolves to
     // the seat it already holds, so the running match comes back here instead of a second empty session
     const deviceB = await pool.connect();
-    const login = await auth(deviceB, 'auth.login', 'Iris', 'pw1234');
+    const login = await auth(deviceB, 'auth.login', accountId, 'pw1234');
     const wb = await deviceB.hello(undefined, null, { account: login.token });
     assert.equal(wb.playerId, wa.playerId, 'the account seat is restored, not a second one');
     assert.equal(wb.resumed, true, 'the restore is a resume: the server resends room and match state');
@@ -341,7 +354,7 @@ describe('accounts: the account name is the in-game name', () => {
 
   test('another account signing in never inherits the seat (isolation)', async () => {
     const { token: jackToken } = await register('Jack', 'pw1234');
-    await register('Kim', 'pw1234'); // Kim exists; the switch below signs in with the password
+    const { accountId: kimAccountId } = await register('Kim', 'pw1234'); // the switch below signs in with the password
 
     // Jack plays a solo run in this browser (one session, one socket)
     const browser = await pool.connect();
@@ -354,7 +367,7 @@ describe('accounts: the account name is the in-game name', () => {
 
     // somebody signs in as Kim on that same session (the shared browser's title screen). The credential exchange
     // itself already releases the seat, before it claims anything.
-    const login = await auth(browser, 'auth.login', 'Kim', 'pw1234');
+    const login = await auth(browser, 'auth.login', kimAccountId, 'pw1234');
     assert.equal(srv.lobby.rooms.get(state.code), undefined, 'the login released Jack\'s seat');
     const wk = await browser.hello(undefined, null, { account: login.token });
     assert.equal(wk.name, 'Kim');

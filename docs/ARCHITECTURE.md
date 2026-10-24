@@ -14,7 +14,7 @@ making one, in Chinese). How to set up, test and send a change: [CONTRIBUTING.md
 ## 1. What runs where
 
 ```
- browser (public/)                               one Node process (server/index.js, Node ≥ 22)
+ browser (public/)                               one Node process (server/index.js, Node ≥ 22.13)
  ┌──────────────────────────────────────┐        ┌─────────────────────────────────────────────────────┐
  │ screens/, ui/   Preact + htm         │─ HTTP ▶│ server/http/  static files: / /data/ /shared/       │
  │ render/         PixiJS, pixi-spine,  │        │               /sim/ /media/, GET /healthz           │

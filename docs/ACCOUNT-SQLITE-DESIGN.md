@@ -1,8 +1,10 @@
 # 账号存储换成 SQLite（方案 B：行粒度）—— 详细设计
 
-> **状态：提案，未实现。** 本文只描述改法、取舍、测试与工作量，不改动任何代码。批准后按 §10 的顺序落地。
-> 相关：今天的实现见 [server/accounts.js](../server/accounts.js)（313 行，`accounts.json` 全量重写）；
-> 协议与规则见 [design/network.md](design/network.md) §8.1；fork 改动清单见 [FORK_NOTES.md](FORK_NOTES.md)。
+> **状态：已实现（2026-10-24）。** 代码见 [server/accounts.js](../server/accounts.js)；协议与规则见
+> [design/network.md](design/network.md) §8.1；fork 改动清单见 [FORK_NOTES.md](FORK_NOTES.md)。§10 的四个 PR 合成一次落地，
+> 实现与本文的差异记在文末「实现说明」；§6 的不变量表仍是验收清单。
+> **同步内容在本文之后又增加了「设置 + 个人插件开关」**（`settings.push` / `settings.pull`，见
+> [shared/settingsSync.js](../shared/settingsSync.js)），落在 `account_docs` 表里，不改变本文的账号 / 调配 / 统计设计。
 
 ## 0. 一句话
 
@@ -58,13 +60,15 @@ PRAGMA busy_timeout = 5000;     -- 第二个连接（测试里会开）等锁，
 PRAGMA foreign_keys = ON;       -- 删账号时调配/统计跟着走
 
 CREATE TABLE accounts (
-  user_key         TEXT PRIMARY KEY,      -- 小写用户名：今天 Map 的 key，所有查找都走它
-  name             TEXT NOT NULL,         -- 注册时的拼写 = 游戏内代号（不能被小写掉）
+  user_key         TEXT PRIMARY KEY,      -- 稳定账号 ID（新账号 sp-…；旧账号 = 原小写用户名），登录与所有查找都走它
+  name             TEXT NOT NULL,         -- 可随时修改的游戏内用户名（不唯一、不作凭证；不能被小写掉）
   salt             TEXT NOT NULL,
   hash             TEXT NOT NULL,
   hash_scheme      TEXT NOT NULL DEFAULT 'scrypt-16384-8-1',  -- 让以后的代价参数可读、可升级
   token            TEXT UNIQUE,           -- 一个账号一个长期 bearer；NULL = 还没有（老数据/被手工删掉）
   loadout_saved    INTEGER NOT NULL DEFAULT 0,  -- 0 = 从未保存过调配；区分 loadout 的 null 与 {}
+  ops_saved        INTEGER NOT NULL DEFAULT 0,  -- ops 单独一个标记（loadout 与 ops 可以各自为 null / {}）
+  skins_json       TEXT,                  -- 干员皮肤 { [charId]: skinId }；NULL = 从未保存，'{}' = 显式清空
   stats_v          INTEGER,               -- 统计镜像的信封版本 = STATS_VERSION；NULL = 没有镜像
   stats_cleared_at INTEGER,               -- 上次「清空统计数据」的时间戳
   created_at       INTEGER NOT NULL,
@@ -117,7 +121,7 @@ CREATE INDEX stats_by_time ON stats_records (user_key, t DESC, seq);
 
 | 今天的 `accounts.json` | B 之后 |
 |---|---|
-| `{alice: …}` 的 key | `accounts.user_key`（小写） |
+| `{alice: …}` 的 key | `accounts.user_key`（旧账号的初始账号 ID；新账号为生成的 `sp-…`） |
 | `rec.name` | `accounts.name` |
 | `rec.salt` / `rec.hash` | 同名列 + `hash_scheme` |
 | `rec.token` | `accounts.token`（UNIQUE） |
@@ -171,20 +175,20 @@ COMMIT
 
 `TAKEN` 用 `ON CONFLICT DO NOTHING` + `changes` 判定，不去解析 SQLite 的错误文本（它是随版本变的字符串）。
 
-### `login(username, password)`
+### `login(accountId, password)`
 
 ```
-SELECT * FROM accounts WHERE user_key = ?      → 没有 → NOT_FOUND
+SELECT * FROM accounts WHERE user_key = ?      → 没有 → NOT_FOUND   -- accountId 小写/去空白后匹配
 scrypt 校验（timingSafeEqual，不变）            → 不符 → BAD_PASSWORD
 BEGIN IMMEDIATE
   UPDATE accounts SET last_login_at = ? WHERE user_key = ?
   token 为空 → 生成一个并 UPDATE（一个账号一个 bearer，绝不轮换：座椅靠它复原）
   读 loadout/ops/stats 的行
 COMMIT
-返回 { ok, key, username: rec.name, token, loadout, ops, stats, statsClearedAt }
+返回 { ok, key, accountId, username: rec.name, token, loadout, ops, stats, statsClearedAt }
 ```
 
-注意 `username` 返回的是**注册时的拼写**（登录大小写不敏感），这一点不能丢。
+注意 `username` 返回的是**当前用户名**（可以随时改、不唯一），`accountId` 才是登录凭据。改用户名不会改 `user_key`。
 
 ### `lookupToken(token)`（同步，`hello` 用）
 
@@ -373,3 +377,14 @@ B 值得做的条件是下列**至少一条**成立：
 - 愿意为"未来能把统计做成一等公民"先付这 3 天的架构税。
 
 如果这些都不成立，本文就是一份**归档的备选方案**，不必实施。
+
+## 13. 实现说明（2026-10-24）
+
+- **账号 ID 与用户名已分开**（同日后续改动）：`user_key` 现在就是稳定账号 ID（新账号为 `sp-…`，旧账号沿用原用户名），`name` 是可随时修改、不唯一、不作凭证的游戏内用户名；登录用 `auth.login.accountId`，改名用 `auth.rename`。旧数据无需迁移：旧 `user_key` 本来就是原用户名，正是旧账号的初始账号 ID。
+- **干员皮肤**：`skins_json` 存 `{ [charId]: skinId }`；库版本升到 2，打开 v1 库时自动 `ALTER TABLE accounts ADD COLUMN skins_json TEXT`。`NULL` 与 `'{}'` 语义不同（从未保存 vs 显式清空），`saveSkins` / `readSkins` 与 `room.skins` 的写回见 [docs/SKINS.md](SKINS.md)「Account sync」。
+- `node:sqlite` 的 `DatabaseSync` 直接同步读写，不引入依赖。库文件 `accounts.db`；**没有可写的账号 / 配置时不创建文件**，所以启动一个不玩账号的服务器（或跑测试）不会在用户目录里留下空库。
+- 表结构与 §3 一致，另加 `accounts.ops_saved`：`loadout` 与 `ops` 各自可以是 `null` 或 `{}`，共用一个 `loadout_saved` 会丢掉其中一边的状态。设置文档用 `account_docs`（`kind = 'settings'`）。
+- 设置文档的写入是**整份覆盖 + 服务端时间戳**，不逐字段合并；`settings.push` 的 `ok` 在事务提交后才回复，紧随其后的 `settings.pull` 一定能读到。客户端文档由 [shared/settingsSync.js](../shared/settingsSync.js) 校验（`v` / `game` / 两个插件 id 列表 / 16 KB 上限）。
+- `close()` 已接入 `server/index.js` 的 `close()` 与启动失败路径；所有测试里新建的 `AccountStore` 都要关闭，否则 Windows 上临时目录删不掉。§8 的「影子等价测试」没有单独保留旧实现：现有 `test/accounts*.test.js` 直接对真实服务器 + 真实客户端断言同样的语义，另加 `test/accounts-settings.test.js` 覆盖迁移与设置文档。
+- 回滚工具（`tools/accounts-export.mjs`）**尚未提供**；当前的回滚路径是停服后保留旧库，或按 §7 用 `sqlite3` 的 `.backup` / SQL 导出。旧的 `accounts.json` 会保留为 `accounts.json.imported`，不会删除。
+- 运维：`ACCOUNTS_DIR` 不要放在 NFS / SMB 上（WAL 依赖共享内存与锁）；备份见 [DEPLOY.md](DEPLOY.md) §3。

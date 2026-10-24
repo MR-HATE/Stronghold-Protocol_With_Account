@@ -12,8 +12,9 @@
 // (assetPack.js pruneImportedAssets; both the maintainer's requests of 2026-10-17). The lobby and the room open it from a 设置 button next to 玩法说明
 // (SettingsButton, GitHub #238); the title screen and the match have their own gear.
 // 外观插件 (DESIGN §32 P1a, the design study's §7.5): a switch for each cosmetic plugin of scope `personal` the server's
-// catalogue lists (content.js) — kept in this browser (`sp.pref.cosmetics`), never sent, seen by this player alone and
-// never part of a battle; the section is left out when the server has none. The switched-on ones form a set like a
+// catalogue lists (content.js) — kept in this browser (`sp.pref.cosmetics`); signed in, the id list follows the account
+// through ui/settingsSync.js, but it is never room content, seen by this player alone and never part of a battle; the
+// section is left out when the server has none. The switched-on ones form a set like a
 // room's (content.js personalSet): one another needs is on as 「自动」 and cannot be switched off alone, a switch that
 // would make a conflict is refused with the room's message, and a chosen one left out (it conflicts now) says so.
 //
@@ -28,6 +29,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from '../../vendor/hooks
 import { html, Modal, Button, Icon, MicroLabel, confirmDialog } from './components.js';
 import { GIcon } from './gameComponents.js';
 import { createStore, useStore, loadPref, savePref, store } from '../store.js';
+import { net, accountStore } from '../net.js';
+import { ACCOUNT_NAME_MAX, sanitizeAccountName } from '../../../shared/account.js';
 import { sanitizeSettings, HOTKEY_ACTIONS, DEFAULT_HOTKEYS, hotkeyLabel, rebindHotkey, isDefaultHotkeys, captureHotkey, VOICE_LANGS, TEXT_SIZES } from './gameLogic.js';
 import { audio } from '../audio.js';
 import { openGuide } from './guide.js';
@@ -333,7 +336,8 @@ function CosmeticSection() {
  * 设置「显示其他玩家的皮肤」 (docs/SKINS.md): whether this browser draws the appearance another player chose
  * (`UnitInfo.skin`, published by the match — `Match.publicView().players[].skins`).
  *
- * Pure client preference, never sent: turning it off makes every OTHER seat's piece draw the operator's own model,
+ * Pure client preference, never sent to a room or another player (it travels only to the player's account settings
+ * document): turning it off makes every OTHER seat's piece draw the operator's own model,
  * 干员调配 its own choice alone. The asymmetry is deliberate and documented — their screen keeps showing their skin, so
  * a co-op's players may see different models for the same piece. On by default: the appearance is what its owner chose
  * it for, and this is the switch for a player who prefers the official model of everyone else.
@@ -345,8 +349,9 @@ function OtherSkinsRow({ value, onSet }) {
 }
 
 /**
- * 界面插件 (DESIGN §32.8): each loaded ui plugin of scope `personal`, switched on in this browser only
- * (`sp.pref.ui-plugins`). It cannot play the match and it does not change what anyone else sees.
+ * 界面插件 (DESIGN §32.8): each loaded ui plugin of scope `personal`, switched on in this browser (`sp.pref.ui-plugins`;
+ * signed in, the id list is mirrored to the account, still only for this player). It cannot play the match and it does
+ * not change what anyone else sees.
  */
 function UiPluginSection() {
   const cat = useStore((s) => s, Object.is, catalog);
@@ -375,6 +380,54 @@ function UiPluginSection() {
           onClick=${() => flip(p.id, !on)}><i></i><span>${on ? tc('toggle', '开启') : tc('toggle', '关闭')}</span></button>
       </div>`;
     })}
+  </section>`;
+}
+
+/**
+ * 设置 → 账号 (fork addition): the stable account ID (what signs in, never changes) and the mutable display username
+ * (the in-game name). Only shown while this browser is signed in. The account ID is copyable; the username is saved
+ * through `auth.rename`, which also renames the seat / running match on the server and updates this browser's record.
+ */
+function AccountSection() {
+  const acct = accountStore.read();
+  const [draft, setDraft] = useState(acct?.username || '');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setDraft(acct?.username || ''); }, [acct?.username, acct?.accountId]);
+  if (!acct) return null;
+  const clean = sanitizeAccountName(draft);
+  const dirty = !!clean && clean !== acct.username;
+  const copy = async () => {
+    toast(await copyText(acct.accountId) ? t('已复制到剪贴板') : t('复制失败，请手动复制'), 'info');
+  };
+  const save = async () => {
+    if (busy || !dirty) return;
+    setBusy(true);
+    try {
+      const r = await net.request('auth.rename', { username: clean });
+      accountStore.write({ ...acct, accountId: r.accountId || acct.accountId, username: r.username });
+      store.set({ me: { ...store.get().me, name: r.username } });
+      setDraft(r.username);
+      toast(t('用户名已更新'), 'success');
+    } catch (err) {
+      toast(err?.detail || err?.msg || err?.code || t('操作失败'), 'error');
+    } finally { setBusy(false); }
+  };
+  return html`<section class="set-plugins" aria-labelledby="set-account-title" data-testid="account-section">
+    <div class="set-keys__head">
+      <span class="set-row__label" id="set-account-title">${t('账号')}<${MicroLabel}>ACCOUNT<//></span>
+    </div>
+    <div class="set-row">
+      <span class="set-row__label">${t('账号')} ID</span>
+      <span class="set-account__id"><b>${acct.accountId || '—'}</b></span>
+      ${acct.accountId ? html`<${Button} variant="secondary" size="sm" onClick=${copy}>${t('复制')}<//>` : null}
+    </div>
+    <div class="set-row">
+      <span class="set-row__label">${t('用户名')}</span>
+      <input class="set-input" type="text" value=${draft} maxLength=${ACCOUNT_NAME_MAX} aria-label=${t('用户名')}
+        onInput=${(e) => setDraft(e.currentTarget.value)} onKeyDown=${(e) => { if (e.key === 'Enter') void save(); }} />
+      <${Button} variant="secondary" size="sm" disabled=${!dirty || busy} onClick=${save}>${busy ? t('保存中…') : t('保存修改')}<//>
+    </div>
+    <p class="set-hint">${t('账号 ID 用于登录；用户名可以随时修改，并作为游戏内代号。')}</p>
   </section>`;
 }
 
@@ -475,6 +528,7 @@ export function SettingsModal({ open, onClose }) {
                         actions=${html`<${Button} variant="secondary" icon="book" class="set-guide" onClick=${() => openGuide(0)}>${t('玩法说明')}<//>
                         <${Button} variant="primary" icon="check" onClick=${onClose}>${t('完成')}<//>`}>
     <div class="set-list">
+      <${AccountSection} />
       <div class="set-row">
         <span class="set-row__label">${t('语言')}<${MicroLabel}>LANGUAGE<//></span>
         <${LangToggle} class="set-lang" />

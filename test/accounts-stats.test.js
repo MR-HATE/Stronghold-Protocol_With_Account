@@ -26,19 +26,16 @@ const noopLog = { info() {}, warn() {}, debug() {}, error() {} };
 const payload = (records) => ({ v: STATS_VERSION, records });
 const rec = (id, t, extra = {}) => ({ id, t, end: 'settled', victory: true, roundsPassed: 3, ...extra });
 
-/** Settle when `pred` holds (the store persists stats fire-and-forget, like the loadout). */
-function waitFor(pred, ms = 3000, what = 'condition') {
-  return new Promise((resolve, reject) => {
-    const t0 = Date.now();
-    const tick = () => {
-      let ok;
-      try { ok = pred(); } catch { ok = false; }
-      if (ok) return resolve(true);
-      if (Date.now() - t0 > ms) return reject(new Error(`timeout waiting for ${what}`));
-      setTimeout(tick, 20);
-    };
-    tick();
-  });
+/** Settle when an async predicate holds (a second SQLite connection reading the row). */
+async function waitForAsync(pred, ms = 3000, what = 'condition') {
+  const t0 = Date.now();
+  for (;;) {
+    let ok;
+    try { ok = await pred(); } catch { ok = false; }
+    if (ok) return true;
+    if (Date.now() - t0 > ms) throw new Error(`timeout waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
 }
 
 function clientPool(getUrl) {
@@ -108,7 +105,8 @@ describe('accounts: the 对局统计 mirror over the wire', () => {
     assert.equal(auth.t, 'auth.result', JSON.stringify(auth));
     const w = await c.hello(undefined, null, { account: auth.token });
     assert.equal(w.name, username);
-    return { client: c, token: auth.token };
+    assert.equal(w.accountId, auth.accountId);
+    return { client: c, token: auth.token, accountId: auth.accountId };
   }
 
   const idsOf = (reply) => (reply.stats?.records || []).map((r) => r.id).sort();
@@ -123,14 +121,16 @@ describe('accounts: the 对局统计 mirror over the wire', () => {
     assert.deepEqual(pulled.stats.records.map((r) => r.id), ['m2', 'm1']);
 
     // the write is fire-and-forget (like the loadout): wait until it lands on disk, then read it back with a store of
-    // its own — a reopen proves the mirror is persisted, not only held in memory
-    const file = path.join(tmp, 'accounts.json');
-    await waitFor(() => {
-      try { return (JSON.parse(fs.readFileSync(file, 'utf8')).statsa?.stats?.records || []).length === 2; } catch { return false; }
-    }, 3000, 'the account file to carry the mirror');
+    // its own — a second connection proves the mirror is persisted, not only held in memory
     const reopened = new AccountStore({ dir: tmp, log: noopLog });
-    const acct = await reopened.resolveToken(token);
-    assert.deepEqual((acct.stats?.records || []).map((r) => r.id), ['m2', 'm1'], 'persisted, not just in memory');
+    try {
+      await waitForAsync(async () => ((await reopened.resolveToken(token))?.stats?.records || []).length === 2,
+        3000, 'the account database to carry the mirror');
+      const acct = await reopened.resolveToken(token);
+      assert.deepEqual((acct.stats?.records || []).map((r) => r.id), ['m2', 'm1'], 'persisted, not just in memory');
+    } finally {
+      reopened.close();
+    }
   });
 
   test('two devices pushing in any order keep each other\'s matches, and login carries the mirror', async () => {
@@ -141,7 +141,7 @@ describe('accounts: the 对局统计 mirror over the wire', () => {
     // not `hello`, deliberately: a hello would take the account's SEAT over from the first device (one account = one
     // seat, accounts.test.js) and close it, while this test is about the mirror only.
     const second = await pool.connect();
-    const login = await second.request({ t: 'auth.login', username: 'StatsB', password: 'pw1234' }, 10_000);
+    const login = await second.request({ t: 'auth.login', accountId: first.accountId, password: 'pw1234' }, 10_000);
     assert.equal(login.t, 'auth.result');
     assert.deepEqual((login.stats?.records || []).map((r) => r.id), ['b1'], 'auth.result carries the mirror');
 

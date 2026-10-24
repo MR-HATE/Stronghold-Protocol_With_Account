@@ -33,6 +33,7 @@ import { useStore } from '../store.js';
 import { catalog, contentSet, loadCatalog, cosmeticPlugins, installedCount, pluginName, unofficialPlugins, personal, personalSet } from '../content.js';
 import { appVersionMatches } from '../../../shared/plugins/manifest.js';
 import { toggleRecommend, uiPluginEntries, uiRecommend, visibleRecommend } from './uiPlugins.js';
+import { rememberRoomPlugins } from './pluginConfig.js';
 import { t, tc, N_ } from '../../../shared/i18n.js';
 import { sizeText, roomPluginFacts, pluginTagText, pluginMicro, ruleLine } from './pluginTag.js';
 
@@ -135,7 +136,10 @@ export function PluginPanel({ open, room, myId, onClose }) {
     inFlight.current = true;
     setBusy(what);
     try {
-      await net.request('room.setPlugins', { plugins: settingsSelection(ids, f.plugins, change) });
+      const plugins = settingsSelection(ids, f.plugins, change);
+      await net.request('room.setPlugins', { plugins });
+      // remember the host's choice (ids + manifest settings) for the next room / device — the account sync carries it
+      rememberRoomPlugins(plugins);
     } catch (err) { toastError(err); } finally {
       inFlight.current = false;
       if (alive.current) setBusy(null);

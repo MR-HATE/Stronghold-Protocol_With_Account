@@ -28,8 +28,9 @@ export const MAX_SEATS = 4;
 export const MAX_SPECTATORS = 2;
 export const ROOM_CODE_LEN = 4;
 /** Max length of a player name (`hello.name`, net.js sanitizeName). A callsign may be this long; an ACCOUNT username
- * is longer (24, server/accounts.js USERNAME_RE), so a logged-in client does not put its username here — it sends no
- * name at all and the verified account username becomes the session name (server/lobby.js accountHello). */
+ * is longer (24, shared/account.js ACCOUNT_NAME_MAX), so a logged-in client does not put its username here — it sends
+ * no name at all and the verified account username becomes the session name (server/lobby.js accountHello). The
+ * account ID (the login credential) is a separate, stable value. */
 export const NAME_MAX_LEN = 12;
 /** Name a session falls back to when the client sends none (a logged-in account whose token this server could not
  * resolve, e.g. after the account store was reset). Not a player choice: the UI shows 博士 for an unnamed player too. */

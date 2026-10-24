@@ -57,6 +57,9 @@ import { StatsHost } from './screens/stats.js';
 import { installRehearsal } from './battle/rehearsal.js';
 import { recordResult, installStatsRecorder } from './ui/stats.js';
 import { installStatsSync } from './ui/statsSync.js';
+import { installSettingsSync } from './ui/settingsSync.js';
+import { installPluginConfigSync } from './ui/pluginConfig.js';
+import { setSkins, parseStoredSkins } from './ui/skins.js';
 import { installLoadoutSync, installOwnershipSync, installDiySync, installSkinsSync } from './ui/loadoutSync.js';
 import { startBuildGuard } from './ui/buildGuard.js';
 import { initLang, useLang, tickerText } from './ui/lang.js';
@@ -168,6 +171,18 @@ function onWelcome(msg) {
   const name = typeof msg.name === 'string' && msg.name ? msg.name : prev.me.name;
   // Never remember the server's fallback name as this browser's callsign.
   if (!rejected) identity.saveName(name);
+  // A verified account's welcome carries its stable account ID and current username: refresh this browser's record
+  // (an older store has only the username / an old display name). The token stays the one this browser holds.
+  if (!rejected && msg.accountName && msg.accountId) {
+    const acct = accountStore.read();
+    if (acct) accountStore.write({ ...acct, accountId: msg.accountId, username: msg.accountName });
+  }
+  // 干员皮肤 (docs/SKINS.md): the account's saved choice arrives with the welcome (a resumed session without a
+  // login has no auth.result). Apply it before installSkinsSync sends room.skins after this welcome. Absent = the
+  // account has no copy yet (keep this browser's choice); `{}` is a real empty choice.
+  if (!rejected && msg.accountSkins !== undefined && msg.accountSkins !== null) {
+    setSkins(parseStoredSkins(msg.accountSkins));
+  }
   store.set({
     me: { playerId: msg.playerId ?? null, name: rejected ? prev.me.name : name, token: typeof msg.token === 'string' ? msg.token : null },
     // the server's content identity (DESIGN §32): the diagnostics name it (diag.js contentLine)
@@ -187,7 +202,7 @@ function onWelcome(msg) {
     backToLobby();
     identity.setEntered(false);
     store.set({ session: { entered: false } });
-    store.patch('ui', { accountExpired: { username: rejected.username } });
+    store.patch('ui', { accountExpired: { username: rejected.username, accountId: rejected.accountId } });
     return;
   }
 
@@ -423,6 +438,13 @@ async function boot() {
     getAccount: () => accountStore.read(),
     isBusy: () => selectRoute(store.get()) === 'game',
   });
+  // 设置 + the personal plugin switches follow the account (extension §account, ui/settingsSync.js): pulled and
+  // applied after every welcome, pushed (debounced) after an edit. A 游客 never sends, and a room's plugin set is
+  // not part of it — that belongs to the room's host.
+  installSettingsSync({ net, getAccount: () => accountStore.read() });
+  // The host's remembered 插件 panel choice (ids + manifest settings): saved locally / to the account by
+  // ui/pluginConfig.js and re-applied to a freshly created room through room.setPlugins.
+  installPluginConfigSync({ net });
   installLoadoutSync({ net });
   installOwnershipSync({ net });
   installDiySync({ net });

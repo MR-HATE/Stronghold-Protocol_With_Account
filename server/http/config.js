@@ -6,7 +6,7 @@
 //   * DEBUG → the console logger's debug level;
 //   * SP_ASSET_INDEX=0 (or the `assetIndex: false` option) → no content-hash index: plain asset URLs, size-mtime ETags
 //     (assetIndex.js); the index of the default public/ persists in .cache/asset-hashes.json;
-//   * ACCOUNTS_DIR → where the optional account store keeps `accounts.json` (extension §account; default
+//   * ACCOUNTS_DIR → where the optional account store keeps `accounts.db` (extension §account; default
 //     `<home>/data` — deliberately OUTSIDE the repository, so updating the game never touches the accounts);
 //   * the served directories (public/, data/, shared/, the content packs' packs/ and the plugins' plugins/ of this
 //     repository unless the options name others), and which startServer() options are handed on to net.js Network and
@@ -32,12 +32,18 @@ export const DEFAULT_ACCOUNTS_DIR = path.join(os.homedir(), 'data');
 /**
  * The account store's directory (extension §account): the `accountsDir` startServer() option, else ACCOUNTS_DIR, else
  * DEFAULT_ACCOUNTS_DIR. Kept out of the repository on purpose — a `git pull` / bundle update must never touch it.
+ *
+ * A test process never uses the operator's real store: `node --test` sets NODE_TEST_CONTEXT, and without an explicit
+ * `accountsDir` / ACCOUNTS_DIR the store goes to a per-process temp directory. The old JSON store only READ the real
+ * file; the SQLite migration would WRITE (and rename) it, which a test must never do to a developer's accounts.
  * @param {{ accountsDir?: string }} [opts]
  * @returns {string}
  */
 export function accountsDirFrom(opts = {}) {
   const explicit = opts.accountsDir || process.env.ACCOUNTS_DIR;
-  return explicit ? path.resolve(explicit) : DEFAULT_ACCOUNTS_DIR;
+  if (explicit) return path.resolve(explicit);
+  if (process.env.NODE_TEST_CONTEXT) return path.join(os.tmpdir(), 'sp-accounts-test', String(process.pid));
+  return DEFAULT_ACCOUNTS_DIR;
 }
 
 /**
