@@ -59,6 +59,10 @@
 
 **结论：按 0.3.0 冻结的插件 API 做不到，建议不做。** 评估（判据、九条耦合点、七个阻塞点、`service` 类草案、三条路线与推荐）见 [ACCOUNT-PLUGIN-FEASIBILITY.md](ACCOUNT-PLUGIN-FEASIBILITY.md)。一句话：0.3.0 里能跑服务器代码的只有 `trusted` 类，它只有 `http.route` / `lobby.on`（5 个只读事件）/ `health.extend` 三个接口，且默认关闭、要求 pin、**拒绝通配/公网监听地址**；而账号系统是「WS 帧 + 会话身份 + 进程内同步 token 查表 + 标题页 UI」，四件事都不在插件 API 的语义里。推荐路线 A：留在树内，把它重构成自包含模块 + 少量显式缝隙。
 
+## 存储换成 SQLite？（提案，未实现）
+
+`accounts.json` 每次写入都重写整个文件、没有约束、损坏即静默清空，换成 SQLite 的详细设计（行粒度 schema、合并语义怎么保持不变、迁移与回滚、测试计划、工作量与风险）见 [ACCOUNT-SQLITE-DESIGN.md](ACCOUNT-SQLITE-DESIGN.md)。**本文只描述改法，代码尚未改动。**
+
 ## 运维：Docker 必须挂账号目录
 
 镜像里 `accounts.json` 在容器的可写层（Dockerfile 结尾是 `USER node`，所以是 `/home/node/data/accounts.json`），**`docker rm` + 重新 `docker run` 就等于清空账号**。重建容器时必须：
