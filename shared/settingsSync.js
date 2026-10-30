@@ -2,7 +2,7 @@
 //
 // The document is the one place the account keeps a player's preferences beyond the 干员调配 and the 对局统计:
 //
-//   { v, game, plugins: { cosmetic: [id…], ui: [id…], room: [{ id, settings? }…] } }
+//   { v, game, plugins: { cosmetic: [id…], ui: [id…], room: [{ id, settings? }…] }, lobbyMedia?: { backdrop, music, dim, scene } }
 //
 //   * `game` is whatever `public/js/ui/gameLogic/settings.js sanitizeSettings` returns — the 设置 dialog's values
 //     (volumes, 语音语言, 伤害数字, 画质, 文字大小, 快捷键 …). The server never reads a field: it stores the object as
@@ -14,6 +14,9 @@
 //     the rooms this account hosts, not the room's live set: applying it still goes through the normal
 //     `room.setPlugins` check, can be refused, and never changes another player's room. The room's live set / hashes
 //     are not part of this document.
+//   * `lobbyMedia` is the 大厅背景与音乐 configuration (`sp.pref.lobby.media`, ui/lobbyMedia.js): `{ backdrop, music,
+//     dim, scene }`. The actual image/video/music files live in the browser's IndexedDB (`sp-lobby-media`) and are
+//     never uploaded.
 //   * A ui plugin's own namespaced `sp.plugin.<id>.` values are NOT here: that is the plugin's private storage, not a
 //     setting this build defines (docs/PLUGINS.md §14).
 //
@@ -92,12 +95,33 @@ export function sanitizeRoomPlugins(raw) {
   return [...byId.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
+/** Known lobby scene ids (`public/js/ui/hubScene.js`). */
+export const LOBBY_SCENE_IDS = Object.freeze(['official', 'night', 'frost', 'ember', 'calm']);
+
+/**
+ * Sanitise the 大厅背景与音乐 configuration (`sp.pref.lobby.media`, ui/lobbyMedia.js), or null when `raw` is present
+ * and not an object.
+ * @param {unknown} raw
+ * @returns {{ backdrop: boolean, music: boolean, dim: number, scene: string } | undefined | null}
+ */
+export function sanitizeLobbyMedia(raw) {
+  if (raw === undefined) return undefined;
+  if (!isObj(raw)) return null;
+  const dim = Number(raw.dim);
+  return {
+    backdrop: raw.backdrop === true,
+    music: raw.music === true,
+    dim: Number.isFinite(dim) ? Math.min(0.8, Math.max(0, Math.round(dim * 1000) / 1000)) : 0.35,
+    scene: typeof raw.scene === 'string' && LOBBY_SCENE_IDS.includes(raw.scene) ? raw.scene : 'official',
+  };
+}
+
 /**
  * Validate and normalise a settings document, or null when it is not this build's shape. The `game` object is carried
- * verbatim (its fields are the client's schema); the plugin id lists and the remembered room-plugin configuration are
- * checked and sorted.
+ * verbatim (its fields are the client's schema); the plugin id lists, the remembered room-plugin configuration and the
+ * optional `lobbyMedia` preferences are checked and normalised.
  * @param {any} raw
- * @returns {{ v: number, game: Record<string, any>, plugins: { cosmetic: string[], ui: string[], room: { id: string, settings?: Record<string, boolean|number|string> }[] } } | null}
+ * @returns {{ v: number, game: Record<string, any>, plugins: { cosmetic: string[], ui: string[], room: { id: string, settings?: Record<string, boolean|number|string> }[] }, lobbyMedia?: { backdrop: boolean, music: boolean, dim: number, scene: string } } | null}
  */
 export function normalizeSettingsDoc(raw) {
   if (!isObj(raw) || raw.v !== SETTINGS_SYNC_VERSION) return null;
@@ -106,8 +130,14 @@ export function normalizeSettingsDoc(raw) {
   const cosmetic = raw.plugins.cosmetic === undefined ? [] : pluginIdList(raw.plugins.cosmetic);
   const ui = raw.plugins.ui === undefined ? [] : pluginIdList(raw.plugins.ui);
   const room = sanitizeRoomPlugins(raw.plugins.room);
-  if (!cosmetic || !ui || !room) return null;
-  const doc = { v: SETTINGS_SYNC_VERSION, game: raw.game, plugins: { cosmetic, ui, room } };
+  const lobbyMedia = sanitizeLobbyMedia(raw.lobbyMedia);
+  if (!cosmetic || !ui || !room || lobbyMedia === null) return null;
+  const doc = {
+    v: SETTINGS_SYNC_VERSION,
+    game: raw.game,
+    plugins: { cosmetic, ui, room },
+    ...(lobbyMedia !== undefined ? { lobbyMedia } : {}),
+  };
   // A UTF-8 string is never shorter than its UTF-16 code-unit length, so this bounds the wire payload roughly; the
   // server checks the exact UTF-8 bytes (server/accounts.js saveSettings). A client document is far below this.
   try {

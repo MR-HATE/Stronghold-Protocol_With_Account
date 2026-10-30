@@ -392,6 +392,18 @@ export function setMediaOn(slot, on) {
 export const setBackdropDim = (dim) => savePrefs({ dim: loadMediaPrefs({ dim }).dim });
 /** The lobby's scene: 'official' (the event's backdrop) or a generated one. */
 export const setScene = (scene) => savePrefs({ scene: loadMediaPrefs({ scene }).scene });
+/**
+ * Apply the account's synced 大厅背景与音乐 configuration (ui/settingsSync.js): persists `sp.pref.lobby.media`, updates
+ * `mediaStore.prefs`, loads saved IndexedDB files if `backdrop` or `music` is switched on, and refreshes the lobby music.
+ * @param {any} raw
+ */
+export function applyMediaPrefs(raw) {
+  const prefs = loadMediaPrefs(raw);
+  savePref(PREF, prefs);
+  mediaStore.set({ prefs });
+  if (prefs.backdrop || prefs.music) void loadSavedMedia();
+  syncMusic();
+}
 
 // ---- views ------------------------------------------------------------------------------------------------------------
 

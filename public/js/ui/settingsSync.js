@@ -29,6 +29,7 @@ import { settingsStore } from './settings.js';
 import { personal } from '../content.js';
 import { uiPlugins } from './uiPlugins.js';
 import { savedRoomPlugins } from './pluginConfig.js';
+import { mediaStore, loadMediaPrefs, applyMediaPrefs } from './lobbyMedia.js';
 import { sanitizeSettings } from './gameLogic.js';
 import { SETTINGS_SYNC_VERSION, isSettingsPluginId, normalizeSettingsDoc, SETTINGS_MAX_PLUGIN_IDS } from '../../../shared/settingsSync.js';
 import { UI_LIMITS } from '../../../shared/plugins/ui.js';
@@ -59,10 +60,10 @@ function cleanIds(ids, max) {
 /**
  * The document this browser would upload: the current settings and plugin switches, sanitised exactly like the
  * store persists them. Null when the local state cannot form a document (never for a store this build wrote).
- * @param {{ settings?: any, personal?: any, ui?: any, room?: any }} [stores]
- * @returns {{ v: number, game: Record<string, any>, plugins: { cosmetic: string[], ui: string[], room: { id: string, settings?: object }[] } } | null}
+ * @param {{ settings?: any, personal?: any, ui?: any, room?: any, media?: any }} [stores]
+ * @returns {{ v: number, game: Record<string, any>, plugins: { cosmetic: string[], ui: string[], room: { id: string, settings?: object }[] }, lobbyMedia?: { backdrop: boolean, music: boolean, dim: number, scene: string } } | null}
  */
-export function buildSettingsDoc({ settings = settingsStore, personal: personalStore = personal, ui: uiStore = uiPlugins, room: roomStore = savedRoomPlugins } = {}) {
+export function buildSettingsDoc({ settings = settingsStore, personal: personalStore = personal, ui: uiStore = uiPlugins, room: roomStore = savedRoomPlugins, media: mediaSt = mediaStore } = {}) {
   return normalizeSettingsDoc({
     v: SETTINGS_SYNC_VERSION,
     game: sanitizeSettings(settings.get()),
@@ -71,28 +72,34 @@ export function buildSettingsDoc({ settings = settingsStore, personal: personalS
       ui: cleanIds(uiStore.get().ids, UI_LIMITS.maxPlugins),
       room: roomStore.get().list,
     },
+    lobbyMedia: loadMediaPrefs(mediaSt.get().prefs),
   });
 }
 
 /**
- * Apply the account's document to this browser: the game settings (replacing the local values) and the two plugin
- * switch lists. Idempotent; a malformed document changes nothing and returns null.
+ * Apply the account's document to this browser: the game settings (replacing the local values), the plugin switch
+ * lists and the 大厅背景与音乐 configuration. Idempotent; a malformed document changes nothing and returns null.
  * @param {any} doc `settings`, `games`, `plugins` from `auth.result` / `settings.sync`
- * @param {{ settings?: any, personal?: any, ui?: any, room?: any }} [stores]
- * @returns {{ v: number, game: Record<string, any>, plugins: { cosmetic: string[], ui: string[], room: { id: string, settings?: object }[] } } | null}
+ * @param {{ settings?: any, personal?: any, ui?: any, room?: any, media?: any }} [stores]
+ * @returns {{ v: number, game: Record<string, any>, plugins: { cosmetic: string[], ui: string[], room: { id: string, settings?: object }[] }, lobbyMedia?: { backdrop: boolean, music: boolean, dim: number, scene: string } } | null}
  */
-export function applyAccountSettings(doc, { settings = settingsStore, personal: personalStore = personal, ui: uiStore = uiPlugins, room: roomStore = savedRoomPlugins } = {}) {
+export function applyAccountSettings(doc, { settings = settingsStore, personal: personalStore = personal, ui: uiStore = uiPlugins, room: roomStore = savedRoomPlugins, media: mediaSt = mediaStore } = {}) {
   const clean = normalizeSettingsDoc(doc);
   if (!clean) return null;
-  // An older account document has no `plugins.room` field: keep this browser's local host choice and let the next
-  // push upgrade the account, instead of treating "field not known then" as "the host has no remembered choice".
+  // An older account document has no `plugins.room` or `lobbyMedia` field: keep this browser's local choice and let the
+  // next push upgrade the account, instead of treating "field not known then" as "reset to default".
   const hasRoom = !!doc && typeof doc === 'object' && !!doc.plugins && Object.hasOwn(doc.plugins, 'room');
+  const hasLobbyMedia = !!doc && typeof doc === 'object' && Object.hasOwn(doc, 'lobbyMedia') && clean.lobbyMedia != null;
   applying++;
   try {
     settings.set(sanitizeSettings(clean.game));
     personalStore.set({ ids: clean.plugins.cosmetic });
     uiStore.set({ ids: clean.plugins.ui.slice(0, UI_LIMITS.maxPlugins) });
     if (hasRoom) roomStore.set({ list: clean.plugins.room });
+    if (hasLobbyMedia) {
+      if (mediaSt === mediaStore) applyMediaPrefs(clean.lobbyMedia);
+      else mediaSt.set({ prefs: loadMediaPrefs(clean.lobbyMedia) });
+    }
   } finally {
     applying--;
   }
@@ -103,7 +110,7 @@ export function applyAccountSettings(doc, { settings = settingsStore, personal: 
  * Wire the settings sync once (main.js calls it at boot). Returns a dispose handle for tests.
  * @param {{ net: any, getAccount?: () => ({ token?: string } | null),
  *   timers?: { setTimeout: Function, clearTimeout: Function },
- *   stores?: { settings?: any, personal?: any, ui?: any, room?: any } }} deps
+ *   stores?: { settings?: any, personal?: any, ui?: any, room?: any, media?: any } }} deps
  *   `getAccount` returns the remembered account (public/js/net.js accountStore); null for a 游客.
  * @returns {{ push: (opts?: { force?: boolean }) => Promise<void>, pull: () => Promise<void>, dispose: () => void }}
  */
@@ -112,7 +119,8 @@ export function installSettingsSync({ net, getAccount = () => null, timers = def
   const personalStore = stores.personal || personal;
   const uiStore = stores.ui || uiPlugins;
   const roomStore = stores.room || savedRoomPlugins;
-  const deps = { settings, personal: personalStore, ui: uiStore, room: roomStore };
+  const mediaSt = stores.media || mediaStore;
+  const deps = { settings, personal: personalStore, ui: uiStore, room: roomStore, media: mediaSt };
   let disposed = false;
   let pushTimer = null;
   let pullTimer = null;
@@ -170,13 +178,15 @@ export function installSettingsSync({ net, getAccount = () => null, timers = def
     // A 游客 (or a server without accounts) answers a plain `ok`: nothing to apply, nothing to seed.
     if (!reply || reply.t !== 'settings.sync') return;
     if (reply.settings) {
-      // An older document has no `plugins.room`: apply the rest, keep this browser's host choice, and push once so the
-      // account gains the field (applyAccountSettings deliberately does not clear it).
+      // An older document has no `plugins.room` or `lobbyMedia`: apply the rest, keep this browser's local choice, and
+      // push once so the account gains the field (applyAccountSettings deliberately does not clear it).
       const hadRoom = !!(reply.settings.plugins && typeof reply.settings.plugins === 'object'
         && Object.hasOwn(reply.settings.plugins, 'room'));
+      const hadLobbyMedia = !!(reply.settings && typeof reply.settings === 'object'
+        && Object.hasOwn(reply.settings, 'lobbyMedia'));
       const applied = applyAccountSettings(reply.settings, deps);
       if (applied) lastSent = JSON.stringify(buildSettingsDoc(deps));
-      if (applied && !hadRoom) await push({ force: true });
+      if (applied && (!hadRoom || !hadLobbyMedia)) await push({ force: true });
     } else {
       // The account has no document yet: this browser seeds it (the first sign-in on an account).
       await push({ force: true });
@@ -184,13 +194,22 @@ export function installSettingsSync({ net, getAccount = () => null, timers = def
   }
 
   // The stores notify synchronously on every set — including the ones applyAccountSettings makes. `applying` is the
-  // guard that keeps an applied account copy from being uploaded straight back.
+  // guard that keeps an applied account copy from being uploaded straight back. Notice `mediaSt` also fires when
+  // IndexedDB finishes loading `backdrop` / `music` or `busy` toggles: only `prefs` changes trigger a push.
+  let lastMediaPrefs = JSON.stringify(loadMediaPrefs(mediaSt.get().prefs));
   const onChange = () => { if (!applying) schedulePush(); };
+  const onMediaChange = (s) => {
+    const next = JSON.stringify(loadMediaPrefs(s?.prefs));
+    if (next === lastMediaPrefs) return;
+    lastMediaPrefs = next;
+    if (!applying) schedulePush();
+  };
   const offs = [
     settings.subscribe(onChange),
     personalStore.subscribe(onChange),
     uiStore.subscribe(onChange),
     roomStore.subscribe(onChange),
+    mediaSt.subscribe(onMediaChange),
   ];
   const offWelcome = net.on?.('welcome', () => {
     lastSent = null;

@@ -26,10 +26,11 @@ const tmpDir = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const SKIN_OP = 'char_498_inside';
 const SKIN_ID = 'char_498_inside@kitchen#2';
 
-const doc = (game = { bgm: 0.4, textSize: 'lg' }, cosmetic = ['skin-a'], ui = ['tally'], room = []) => ({
+const doc = (game = { bgm: 0.4, textSize: 'lg' }, cosmetic = ['skin-a'], ui = ['tally'], room = [], lobbyMedia = undefined) => ({
   v: SETTINGS_SYNC_VERSION,
   game,
   plugins: { cosmetic, ui, room },
+  ...(lobbyMedia !== undefined ? { lobbyMedia } : {}),
 });
 
 /** Settle when an async predicate holds (DB writes from room.skins are fire-and-forget). */
@@ -94,6 +95,16 @@ describe('shared/settingsSync.js: the document shape', () => {
     assert.equal(normalizeSettingsDoc(doc({}, [], [], [{ id: 'alpha', settings: { x: null } }])), null);
     assert.equal(normalizeSettingsDoc(doc({}, [], [], [{ id: 'alpha', settings: JSON.parse('{"__proto__":1}') }])), null);
     assert.equal(normalizeSettingsDoc(doc({}, [], [], Array.from({ length: 33 }, (_, i) => ({ id: `p-${i}` })))), null);
+  });
+
+  test('lobbyMedia: optional, sanitised when present, refused when not an object', () => {
+    const withMedia = normalizeSettingsDoc(doc({}, [], [], [], { backdrop: true, music: 'no', dim: 2, scene: 'frost' }));
+    assert.deepEqual(withMedia.lobbyMedia, { backdrop: true, music: false, dim: 0.8, scene: 'frost' });
+    const badScene = normalizeSettingsDoc(doc({}, [], [], [], { dim: -1, scene: 'unknown' }));
+    assert.deepEqual(badScene.lobbyMedia, { backdrop: false, music: false, dim: 0, scene: 'official' });
+    assert.equal('lobbyMedia' in normalizeSettingsDoc(doc()), false, 'omitted when not in the input');
+    assert.equal(normalizeSettingsDoc(doc({}, [], [], [], 'nope')), null);
+    assert.equal(normalizeSettingsDoc(doc({}, [], [], [], [])), null);
   });
 });
 

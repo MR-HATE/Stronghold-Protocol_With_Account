@@ -24,6 +24,7 @@ function stores(initial = {}) {
     personal: createStore({ ids: ['skin-b', 'skin-a'] }),
     ui: createStore({ ids: ['tally'] }),
     room: createStore({ list: [{ id: 'room-a', settings: { refresh: 1 } }] }),
+    media: createStore({ prefs: { backdrop: false, music: false, dim: 0.35, scene: 'official' }, backdrop: null, music: null, busy: null }),
   };
 }
 
@@ -40,7 +41,7 @@ function fakeNet(reply = null) {
   };
 }
 
-test('buildSettingsDoc carries the sanitised settings and sorted plugin ids', () => {
+test('buildSettingsDoc carries the sanitised settings, sorted plugin ids and lobbyMedia prefs', () => {
   const s = stores();
   const doc = buildSettingsDoc(s);
   assert.equal(doc.v, SETTINGS_SYNC_VERSION);
@@ -49,35 +50,46 @@ test('buildSettingsDoc carries the sanitised settings and sorted plugin ids', ()
     cosmetic: ['skin-a', 'skin-b'], ui: ['tally'],
     room: [{ id: 'room-a', settings: { refresh: 1 } }],
   });
+  assert.deepEqual(doc.lobbyMedia, { backdrop: false, music: false, dim: 0.35, scene: 'official' });
 });
 
-test('applyAccountSettings replaces the settings and both switch lists', () => {
+test('applyAccountSettings replaces the settings, switch lists and lobbyMedia prefs', () => {
   const s = stores({ bgm: 0.1 });
   const applied = applyAccountSettings({
     v: SETTINGS_SYNC_VERSION,
     game: { bgm: 0.9, textSize: 'xl' },
     plugins: { cosmetic: ['z-skin'], ui: ['a-ui', 'b-ui'], room: [{ id: 'from-account', settings: { mode: 2 } }] },
+    lobbyMedia: { backdrop: true, music: false, dim: 0.6, scene: 'ember' },
   }, s);
   assert.deepEqual(applied.plugins, {
     cosmetic: ['z-skin'], ui: ['a-ui', 'b-ui'],
     room: [{ id: 'from-account', settings: { mode: 2 } }],
   });
+  assert.deepEqual(applied.lobbyMedia, { backdrop: true, music: false, dim: 0.6, scene: 'ember' });
   assert.equal(s.settings.get().bgm, 0.9);
   assert.equal(s.settings.get().textSize, 'xl');
   assert.deepEqual(s.personal.get().ids, ['z-skin']);
   assert.deepEqual(s.ui.get().ids, ['a-ui', 'b-ui']);
   assert.deepEqual(s.room.get().list, [{ id: 'from-account', settings: { mode: 2 } }]);
+  assert.deepEqual(s.media.get().prefs, { backdrop: true, music: false, dim: 0.6, scene: 'ember' });
   assert.equal(applyAccountSettings({ v: 99, game: {}, plugins: {} }, s), null, 'a foreign document changes nothing');
 
-  // an account document from before the room-plugin field existed keeps this browser's local host choice
+  // an account document from before the room-plugin / lobbyMedia fields existed keeps this browser's local choices
   const before = stores();
+  before.media.set({ prefs: { backdrop: false, music: true, dim: 0.5, scene: 'night' } });
   applyAccountSettings({ v: SETTINGS_SYNC_VERSION, game: {}, plugins: { cosmetic: [], ui: [] } }, before);
   assert.deepEqual(before.room.get().list, [{ id: 'room-a', settings: { refresh: 1 } }]);
+  assert.deepEqual(before.media.get().prefs, { backdrop: false, music: true, dim: 0.5, scene: 'night' });
 });
 
 test('pull applies the account copy; a local edit pushes one document; a 游客 sends nothing', async () => {
   const s = stores();
-  const accountDoc = { v: SETTINGS_SYNC_VERSION, game: { bgm: 0.8 }, plugins: { cosmetic: ['from-account'], ui: [], room: [{ id: 'account-room' }] } };
+  const accountDoc = {
+    v: SETTINGS_SYNC_VERSION,
+    game: { bgm: 0.8 },
+    plugins: { cosmetic: ['from-account'], ui: [], room: [{ id: 'account-room' }] },
+    lobbyMedia: { backdrop: false, music: true, dim: 0.4, scene: 'frost' },
+  };
   const net = fakeNet((t) => (t === 'settings.pull' ? { t: 'settings.sync', settings: accountDoc, updatedAt: 7 } : { t: 'ok' }));
   let account = { token: 'a'.repeat(64) };
   const sync = installSettingsSync({ net, getAccount: () => account, stores: s });
@@ -87,6 +99,7 @@ test('pull applies the account copy; a local edit pushes one document; a 游客 
     assert.equal(s.settings.get().bgm, 0.8, 'the account copy is local after a pull');
     assert.deepEqual(s.personal.get().ids, ['from-account']);
     assert.deepEqual(s.room.get().list, [{ id: 'account-room' }]);
+    assert.deepEqual(s.media.get().prefs, { backdrop: false, music: true, dim: 0.4, scene: 'frost' });
 
     // a local edit is one whole-document push
     s.settings.set({ ...s.settings.get(), bgm: 0.2 });
@@ -96,6 +109,7 @@ test('pull applies the account copy; a local edit pushes one document; a 游客 
     assert.equal(push.payload.settings.game.bgm, 0.2);
     assert.deepEqual(push.payload.settings.plugins.cosmetic, ['from-account']);
     assert.deepEqual(push.payload.settings.plugins.room, [{ id: 'account-room' }]);
+    assert.deepEqual(push.payload.settings.lobbyMedia, { backdrop: false, music: true, dim: 0.4, scene: 'frost' });
 
     // a 游客 (no account token) sends nothing
     account = null;
